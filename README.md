@@ -1,2 +1,2 @@
 # Baekya Protocol
-A proof of contribution protocol that guarantees contributors economic live rights and democratic participatory right
+A decentralized protocol for contribution-based issuance that guarantees contributors Basic and Politic rights
