@@ -5,7 +5,7 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install only production dependencies
+# Install dependencies
 RUN npm install --only=production
 
 # Copy only necessary files for relay server
@@ -18,3 +18,4 @@ ENV NODE_ENV=production
 ENV PORT=3000
 
 CMD ["node", "p2p-relay-server.js"]
+

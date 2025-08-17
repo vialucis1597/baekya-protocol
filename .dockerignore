@@ -1,0 +1,102 @@
+# Node modules
+node_modules
+npm-debug.log*
+
+# Android build files
+android/
+Android-SDK/
+*.keystore
+
+# JDK files
+jdk-*/
+*.zip
+
+# Build artifacts
+build/
+dist/
+
+# Data files
+baekya_data/
+*.json.backup
+relay-listing-data.json
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Images and icons (keep only essential ones)
+icons/
+images/
+
+# Webapp (not needed for server deployments)
+webapp/
+
+# Test files
+tests/
+*.test.js
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Git files
+.git
+.gitignore
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs
+*.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# Dependency directories
+.npm
+.eslintcache
+
+# Optional npm cache directory
+.npm
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# Deployment scripts (not needed in container)
+deploy-*.ps1
+deploy-*.sh
+
+# Other Dockerfiles (each deployment should only include its own)
+Dockerfile*
+!Dockerfile.listing
+!Dockerfile.relay
+!Dockerfile.flyio.listing
+!Dockerfile.flyio.relay
+
+# Large temp files
+*.tmp
+*.temp

@@ -417,6 +417,7 @@ class BlockchainCore {
         'github_integration_bonus', // GitHub 연동 보너스
         'governance_proposal_creation', // 거버넌스 제안 생성
         'governance_vote',        // 거버넌스 투표
+        'governance_collaboration_transition', // 거버넌스 협업 단계 전환
         'relay_reward'           // 릴레이 노드 보상
       ];
       

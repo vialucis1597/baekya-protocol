@@ -218,23 +218,42 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
   async discoverListingServer() {
     console.log('🔍 리스팅 서버 자동 탐색 중...');
     
-    // 순차적으로 번호를 증가시키며 탐색
+    // Fly.io와 Railway를 번갈아가며 시도
     for (let i = 1; i <= 10; i++) {
-      const serverUrl = `https://listing-server-production${i}.up.railway.app`;
-      console.log(`   시도 중: ${serverUrl}`);
+      // Fly.io 시도
+      const flyUrl = `https://bplisting${i}.fly.dev`;
+      console.log(`   시도 중: ${flyUrl}`);
       
       try {
-        const response = await fetch(`${serverUrl}/api/status`, {
+        const response = await fetch(`${flyUrl}/api/status`, {
           method: 'GET',
           timeout: 3000
         });
         
         if (response.ok) {
-          console.log(`✅ 리스팅 서버 발견: ${serverUrl}`);
-          return serverUrl;
+          console.log(`✅ 리스팅 서버 발견: ${flyUrl}`);
+          return flyUrl;
         }
       } catch (error) {
-        console.log(`   ❌ ${serverUrl} 접속 실패`);
+        console.log(`   ❌ ${flyUrl} 접속 실패`);
+      }
+      
+      // Railway 시도
+      const railwayUrl = `https://bplisting${i}-production.up.railway.app`;
+      console.log(`   시도 중: ${railwayUrl}`);
+      
+      try {
+        const response = await fetch(`${railwayUrl}/api/status`, {
+          method: 'GET',
+          timeout: 3000
+        });
+        
+        if (response.ok) {
+          console.log(`✅ 리스팅 서버 발견: ${railwayUrl}`);
+          return railwayUrl;
+        }
+      } catch (error) {
+        console.log(`   ❌ ${railwayUrl} 접속 실패`);
       }
     }
     
@@ -690,10 +709,15 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
     return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
-  // WebSocket 메시지 처리
-  handleWebSocketMessage(data) {
-    switch (data.type) {
-      case 'user_connected':
+     // WebSocket 메시지 처리
+   handleWebSocketMessage(data) {
+     // 💰 모든 WebSocket 메시지 수신 시 지갑 강제 새로고침
+     if (this.isAuthenticated && this.currentUser) {
+       this.updateTokenBalances(true);
+     }
+     
+     switch (data.type) {
+       case 'user_connected':
         // 릴레이 서버가 풀노드를 할당함
         console.log('✅ 풀노드 할당됨:', data.assignedNode);
         this.assignedNode = data.assignedNode;
@@ -731,6 +755,12 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
       case 'state_update':
         // 상태 업데이트
         console.log('📊 상태 업데이트 수신:', data.timestamp);
+        this.handleStateUpdate(data);
+        break;
+        
+      case 'wallet_update':
+        // 투표 비용 차감 등 실시간 잔액 업데이트
+        console.log('💰 지갑 업데이트 수신:', data.message);
         this.handleStateUpdate(data);
         break;
         
@@ -1073,9 +1103,9 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
   handleStateUpdate(data) {
     console.log('📊 상태 업데이트:', data);
     
-    // 지갑 정보 업데이트
-    if (data.wallet && data.wallet.balances) {
-      const walletData = data.wallet;
+    // 지갑 정보 업데이트 (wallet 또는 wallet_update 타입)
+    if ((data.wallet && data.wallet.balances) || (data.type === 'wallet_update' && data.balances)) {
+      const walletData = data.wallet || data;
       
       // B-토큰 잔액 업데이트
         const bTokenAmount = walletData.balances.bToken || 0;
@@ -1103,8 +1133,8 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
         localStorage.setItem('baekya_auth', JSON.stringify(this.currentUser));
       }
         
-        // UI 업데이트
-        this.updateTokenBalances();
+        // UI 업데이트 (웹소켓 메시지 수신마다 자동 새로고침)
+        this.updateTokenBalances(true);
       
       // 실제 잔액 변경이 있을 때만 알림 표시
       if (bTokenAmount !== prevBTokenAmount || pTokenAmount !== prevPTokenAmount) {
@@ -1116,6 +1146,11 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
           if (changeB > 0) message += `\nB-Token: +${changeB}`;
           if (changeP > 0) message += `\nP-Token: +${changeP}`;
           this.showSuccessMessage(message);
+        } else if (changeB < 0) {
+          // 투표 비용 차감 등 특별한 메시지가 있으면 표시
+          if (walletData.message) {
+            this.showSuccessMessage(walletData.message);
+          }
         }
       }
     }

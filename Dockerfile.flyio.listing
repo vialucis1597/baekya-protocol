@@ -11,9 +11,8 @@ RUN npm install --only=production
 # Copy only necessary files for listing server
 COPY listing-server.js ./
 
+# Expose port
 EXPOSE 4000
 
-ENV NODE_ENV=production
-ENV PORT=4000
-
+# Start the listing server
 CMD ["node", "listing-server.js"]

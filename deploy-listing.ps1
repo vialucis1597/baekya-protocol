@@ -134,6 +134,7 @@ try {
     # Set environment variables
     Write-Host "Setting environment variables..." -ForegroundColor Yellow
     railway variables --set "NODE_ENV=production"
+    railway variables --set "RAILWAY_APP_NAME=$ProjectName"
     
     # Backup and replace package.json
     Write-Host "Preparing deployment configuration..." -ForegroundColor Yellow

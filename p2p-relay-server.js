@@ -90,13 +90,14 @@ app.post('/api/auth', (req, res) => {
 async function discoverListingServer() {
   console.log('🔍 리스팅 서버 자동 탐색 중...');
   
-  // 순차적으로 번호를 증가시키며 탐색
+  // Fly.io와 Railway를 번갈아가며 시도
   for (let i = 1; i <= 50; i++) { // 최대 50개까지 탐색
-    const serverUrl = `https://listing-server-production${i}.up.railway.app`;
+    // Fly.io 시도
+    const flyUrl = `https://bplisting${i}.fly.dev`;
     
     try {
-      console.log(`   시도 중: ${serverUrl}`);
-      const response = await fetch(`${serverUrl}/api/status`, {
+      console.log(`   시도 중: ${flyUrl}`);
+      const response = await fetch(`${flyUrl}/api/status`, {
         method: 'GET',
         timeout: 3000
       });
@@ -104,8 +105,29 @@ async function discoverListingServer() {
       if (response.ok) {
         const data = await response.json();
         if (data.status === 'running') {
-          console.log(`✅ 리스팅 서버 발견: ${serverUrl}`);
-          return serverUrl;
+          console.log(`✅ 리스팅 서버 발견: ${flyUrl}`);
+          return flyUrl;
+        }
+      }
+    } catch (error) {
+      // 조용히 실패 - Railway 시도로 계속
+    }
+    
+    // Railway 시도
+    const railwayUrl = `https://bplisting${i}-production.up.railway.app`;
+    
+    try {
+      console.log(`   시도 중: ${railwayUrl}`);
+      const response = await fetch(`${railwayUrl}/api/status`, {
+        method: 'GET',
+        timeout: 3000
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.status === 'running') {
+          console.log(`✅ 리스팅 서버 발견: ${railwayUrl}`);
+          return railwayUrl;
         }
       }
     } catch (error) {
@@ -127,15 +149,42 @@ async function registerToListingServer() {
     listingServers.push(discoveredServer);
   }
   
-  // 백업 서버들 추가
+  // 백업 서버들 추가 (배포 환경 전용)
   listingServers.push(
-    'https://baekya-listing-server.railway.app',
-    'http://localhost:4000'
+    'https://bplisting.fly.dev'
   );
   
-  const relayUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? 
-    `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : 
-    `http://localhost:${port}`;
+  // 중계서버 URL 동적 감지 (로컬 개발 환경 제외)
+  let relayUrl = null;
+  
+  // 환경변수에서 직접 지정된 경우
+  if (process.env.RELAY_SERVER_URL) {
+    relayUrl = process.env.RELAY_SERVER_URL;
+  }
+  // Railway 환경 감지
+  else if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+    relayUrl = `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+  }
+  // Fly.io 환경 감지
+  else if (process.env.FLY_APP_NAME) {
+    relayUrl = `https://${process.env.FLY_APP_NAME}.fly.dev`;
+  }
+  // Fly.io 환경에서 app 이름이 설정되지 않은 경우
+  else if (process.env.FLY_ALLOC_ID || process.env.FLY_REGION) {
+    relayUrl = `https://bprelay.fly.dev`; // 기본 Fly.io URL
+  }
+  // Railway 환경에서 도메인이 설정되지 않은 경우
+  else if (process.env.RAILWAY_ENVIRONMENT) {
+    relayUrl = `https://bprelay1-production.up.railway.app`; // 기본 Railway URL
+  }
+  
+  // 배포 환경이 아니면 등록하지 않음
+  if (!relayUrl) {
+    console.log('🏠 로컬 개발 환경: 리스팅 서버 등록 생략');
+    return;
+  }
+  
+  console.log(`🌐 중계서버 URL: ${relayUrl}`);
   
   for (const listingServer of listingServers) {
     try {
@@ -289,9 +338,19 @@ app.post('/api/relay-list-update', (req, res) => {
   if (type === 'relay_list_update') {
     console.log(`📡 리스트 업데이트 수신: ${relays.length}개 중계서버 (from: ${source})`);
     
-    // 리스트 정보를 메모리에 저장 (필요시 사용)
+    // 리스트 정보를 메모리에 저장
     global.relayList = relays;
     global.lastListUpdate = timestamp;
+    
+    // 연결된 모든 풀노드들에게 업데이트된 중계서버 리스트 전파
+    broadcastToNodes({
+      type: 'relay_list_update',
+      relays: relays,
+      timestamp: timestamp,
+      source: source
+    });
+    
+    console.log(`📤 ${relays.length}개 중계서버 리스트를 연결된 풀노드들에게 전파`);
   }
   
   res.json({

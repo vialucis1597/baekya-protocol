@@ -2,14 +2,19 @@ FROM node:18-alpine
 
 WORKDIR /app
 
+# Copy package files
 COPY package*.json ./
-RUN npm install
 
-COPY . .
+# Install only production dependencies
+RUN npm install --only=production
+
+# Copy only necessary files for relay server
+COPY p2p-relay-server.js ./
+COPY src/ ./src/
 
 EXPOSE 3000
 
 ENV NODE_ENV=production
 ENV PORT=3000
 
-CMD ["npm", "run", "relay"]
+CMD ["node", "p2p-relay-server.js"]

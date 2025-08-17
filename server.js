@@ -228,16 +228,23 @@ async function propagateRelayListUpdate() {
 
 // 모든 중계서버에 블록 전파
 async function propagateBlockToAllRelays(blockData) {
-  const relayList = Array.from(relayServersList.values()).filter(relay => 
+  const allRelays = Array.from(relayServersList.values());
+  const relayList = allRelays.filter(relay => 
     Date.now() - relay.lastUpdate < 300000 // 5분 이내 활성 중계서버만
   );
   
+  console.log(`📡 중계서버 상태: 총 ${allRelays.length}개, 활성 ${relayList.length}개`);
+  
   if (relayList.length === 0) {
     console.log('📡 활성 중계서버가 없습니다 - 블록 전파 생략');
+    if (allRelays.length > 0) {
+      console.log('ℹ️ 비활성 중계서버들:', allRelays.map(r => `${r.url} (${Math.floor((Date.now() - r.lastUpdate) / 1000)}초 전)`));
+    }
     return;
   }
   
   console.log(`📡 ${relayList.length}개 중계서버에 블록 전파 중...`);
+  console.log(`ℹ️ 대상 중계서버: ${relayList.map(r => r.url).join(', ')}`);
   
   const promises = relayList.map(async (relay) => {
     try {
@@ -298,10 +305,9 @@ async function registerToListingServer(url, location, nodeInfo) {
     listingServers.push(discoveredServer);
   }
   
-  // 백업 서버들 추가
+  // 백업 서버들 추가 (배포 환경 전용)
   listingServers.push(
-    'https://baekya-listing-server.railway.app', // 메인 리스팅 서버
-    'http://localhost:4000' // 로컬 리스팅 서버 (개발용)
+    'https://bplisting.fly.dev' // 메인 리스팅 서버
   );
   
   for (const listingServer of listingServers) {
@@ -334,13 +340,14 @@ async function registerToListingServer(url, location, nodeInfo) {
 async function discoverListingServer() {
   console.log('🔍 리스팅 서버 자동 탐색 중...');
   
-  // 순차적으로 번호를 증가시키며 탐색
+  // Fly.io와 Railway를 번갈아가며 시도
   for (let i = 1; i <= 50; i++) { // 최대 50개까지 탐색
-    const serverUrl = `https://listing-server-production${i}.up.railway.app`;
+    // Fly.io 시도
+    const flyUrl = `https://bplisting${i}.fly.dev`;
     
     try {
-      console.log(`   시도 중: ${serverUrl}`);
-      const response = await fetch(`${serverUrl}/api/status`, {
+      console.log(`   시도 중: ${flyUrl}`);
+      const response = await fetch(`${flyUrl}/api/status`, {
         method: 'GET',
         timeout: 3000
       });
@@ -348,8 +355,29 @@ async function discoverListingServer() {
       if (response.ok) {
         const data = await response.json();
         if (data.status === 'running') {
-          console.log(`✅ 리스팅 서버 발견: ${serverUrl}`);
-          return serverUrl;
+          console.log(`✅ 리스팅 서버 발견: ${flyUrl}`);
+          return flyUrl;
+        }
+      }
+    } catch (error) {
+      // 조용히 실패 - Railway 시도로 계속
+    }
+    
+    // Railway 시도
+    const railwayUrl = `https://bplisting${i}-production.up.railway.app`;
+    
+    try {
+      console.log(`   시도 중: ${railwayUrl}`);
+      const response = await fetch(`${railwayUrl}/api/status`, {
+        method: 'GET',
+        timeout: 3000
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.status === 'running') {
+          console.log(`✅ 리스팅 서버 발견: ${railwayUrl}`);
+          return railwayUrl;
         }
       }
     } catch (error) {
@@ -363,6 +391,9 @@ async function discoverListingServer() {
 
 // 리스팅 서버에서 중계서버 목록 가져오기
 async function fetchRelayListFromListingServer() {
+  const beforeCount = relayServersList.size;
+  console.log(`🔍 중계서버 목록 업데이트 시작 (현재: ${beforeCount}개)`);
+  
   // 먼저 자동 탐색으로 리스팅 서버 찾기
   const discoveredServer = await discoverListingServer();
   
@@ -371,10 +402,9 @@ async function fetchRelayListFromListingServer() {
     listingServers.push(discoveredServer);
   }
   
-  // 백업 서버들 추가
+  // 백업 서버들 추가 (배포 환경 전용)
   listingServers.push(
-    'https://baekya-listing-server.railway.app',
-    'http://localhost:4000'
+    'https://bplisting.fly.dev'
   );
   
   for (const listingServer of listingServers) {
@@ -402,6 +432,9 @@ async function fetchRelayListFromListingServer() {
           });
           
           console.log(`📡 리스팅 서버에서 ${onlineRelays.length}개 중계서버 목록 업데이트`);
+          if (onlineRelays.length > 0) {
+            console.log(`ℹ️ 업데이트된 중계서버: ${onlineRelays.map(r => r.url).join(', ')}`);
+          }
           return onlineRelays;
         }
       }
@@ -410,6 +443,8 @@ async function fetchRelayListFromListingServer() {
     }
   }
   
+  const afterCount = relayServersList.size;
+  console.log(`📊 중계서버 목록 업데이트 완료: ${beforeCount}개 → ${afterCount}개`);
   return [];
 }
 
@@ -478,9 +513,6 @@ function findDIDByWalletAddress(walletAddress) {
 
 
 
-// 릴레이 매니저를 사용한 동적 릴레이 연결
-const RelayManager = require('./src/network/RelayManager');
-let relayManager = null;
 let nodeId = uuidv4(); // 이 풀노드의 고유 ID
 
 // 로컬 직접 연결 모드 - 중계 서버 사용 안함
@@ -528,6 +560,7 @@ wss.on('connection', (ws) => {
           clientSessions.set(ws, { did: userDID, sessionId: sessionId });
           
           console.log(`✅ 새 연결 등록: ${userDID}, 세션: ${sessionId}`);
+          console.log(`📊 현재 총 연결된 클라이언트 수: ${clients.size}`);
           
           // 즉시 최신 상태 전송
           protocol.getUserWallet(userDID).then(wallet => {
@@ -601,6 +634,7 @@ wss.on('connection', (ws) => {
       if (clients.get(userDID) === ws) {
         clients.delete(userDID);
         console.log(`🗑️ 클라이언트 맵에서 제거: ${userDID}`);
+        console.log(`📊 현재 총 연결된 클라이언트 수: ${clients.size}`);
     }
     }
     
@@ -638,19 +672,7 @@ function broadcastStateUpdate(userDID, updateData) {
     // 로컬 클라이언트 없음 (정상 상황 - 웹앱은 릴레이 경유)
   }
   
-  // 릴레이 서버에도 전송 (Vercel 웹앱용)
-  if (relayManager && relayManager.connectionState === 'connected') {
-    try {
-      relayManager.sendMessage('state_update', {
-        userDID: userDID,
-        updateData: updateData,
-        timestamp: Date.now()
-      });
-      console.log(`✅ 릴레이 서버에 전송 성공: ${userDID}`);
-    } catch (error) {
-      console.warn('⚠️ 릴레이로 상태 업데이트 전송 실패:', error.message);
-    }
-  }
+
 }
 
 // 전체 사용자에게 검증자 풀 업데이트 브로드캐스트
@@ -676,19 +698,6 @@ function broadcastPoolUpdate(poolStatus) {
     });
   
   console.log(`✅ 로컬 클라이언트 전송: ${successCount}/${totalCount}`);
-  
-  // 릴레이 서버에도 전송 (Vercel 웹앱용)
-  if (relayManager && relayManager.connectionState === 'connected') {
-    try {
-      relayManager.sendMessage('pool_update', {
-        validatorPool: poolStatus,
-        timestamp: Date.now()
-      });
-      console.log(`✅ 릴레이 서버에 전송 성공`);
-    } catch (error) {
-      console.warn('⚠️ 릴레이로 풀 업데이트 전송 실패:', error.message);
-    }
-  }
 }
 
 // 전체 사용자에게 DAO 금고 업데이트 브로드캐스트
@@ -714,19 +723,6 @@ function broadcastDAOTreasuryUpdate(daoTreasuries) {
     });
   
   console.log(`✅ 로컬 클라이언트 전송: ${successCount}/${totalCount}`);
-  
-  // 릴레이 서버에도 전송 (Vercel 웹앱용)
-  if (relayManager && relayManager.connectionState === 'connected') {
-    try {
-      relayManager.sendMessage('dao_treasury_update', {
-        daoTreasuries: daoTreasuries,
-        timestamp: Date.now()
-      });
-      console.log(`✅ 릴레이 서버에 전송 성공`);
-    } catch (error) {
-      console.warn('⚠️ 릴레이로 DAO 금고 업데이트 전송 실패:', error.message);
-    }
-  }
 }
 
 // 서버 초기화 함수
@@ -949,18 +945,16 @@ async function connectToRelay(relayUrl, password) {
     
     console.log('✅ 중계서버 인증 성공');
     
-    // 중계서버를 로컬 리스트에 등록
-    await registerRelayServer(fullUrl, "Seoul, Korea", {
-      nodeId: nodeId,
-      nodeEndpoint: `http://localhost:${port}`,
-      version: '1.0.0',
-      capabilities: ['transaction_processing', 'block_validation', 'storage']
-    });
-    
     console.log('🎉 중계서버 연결 완료! 블록체인 네트워크에 참여했습니다.');
     
     // 리스팅 서버에서 다른 중계서버 목록 가져오기
     await fetchRelayListFromListingServer();
+    
+    // 주기적으로 중계서버 리스트 업데이트 (5분마다)
+    setInterval(async () => {
+      console.log('🔄 중계서버 리스트 업데이트 중...');
+      await fetchRelayListFromListingServer();
+    }, 300000); // 5분
     
     // 연결 완료 후 터미널 인터페이스 시작
     setupTerminalInterface();
@@ -977,6 +971,29 @@ async function handleRelayMessage(message) {
       console.log(`🎉 릴레이 서버에 등록 완료! Node ID: ${message.nodeId}`);
       break;
       
+    case 'relay_list_update':
+      // 중계서버 리스트 업데이트 수신
+      if (message.relays && Array.isArray(message.relays)) {
+        console.log(`📡 중계서버 리스트 업데이트 수신: ${message.relays.length}개 (from: ${message.source})`);
+        
+        // 로컬 중계서버 리스트 업데이트
+        relayServersList.clear();
+        message.relays.forEach(relay => {
+          relayServersList.set(relay.url, {
+            url: relay.url,
+            location: relay.location,
+            nodeInfo: relay.nodeInfo,
+            lastUpdate: relay.lastUpdate
+          });
+        });
+        
+        console.log(`📊 중계서버 리스트 업데이트 완료: ${relayServersList.size}개 중계서버`);
+        if (relayServersList.size > 0) {
+          console.log(`ℹ️ 등록된 중계서버: ${Array.from(relayServersList.keys()).join(', ')}`);
+        }
+      }
+      break;
+      
     case 'http_request':
       // HTTP 요청 처리
       try {
@@ -986,13 +1003,7 @@ async function handleRelayMessage(message) {
         // Express 라우터를 통해 요청 처리
         const response = await processHttpRequest(method, path, headers, body, query);
         
-        // 응답 전송
-        if (relayManager && relayManager.connectionState === 'connected') {
-          relayManager.sendMessage('http_response', {
-            requestId: requestId,
-            response: response
-          });
-        }
+        // 응답 전송 (로컬 WebSocket만 사용)
       } catch (error) {
         console.error('HTTP 요청 처리 오류:', error);
       }
@@ -1416,18 +1427,7 @@ async function processHttpRequest(method, path, headers, body, query) {
           // 저장소에 초대코드 저장
           protocol.components.storage.saveUserInviteCode(finalUserDID, inviteCode);
           
-          // 릴레이를 통해 다른 검증자들에게 트랜잭션 브로드캐스트
-          if (relayManager && relayManager.connectionState === 'connected') {
-            try {
-              relayManager.sendMessage('transaction', {
-                transaction: inviteCodeTx,
-                timestamp: Date.now()
-              });
-              console.log('📡 릴레이를 통해 초대코드 트랜잭션 브로드캐스트 완료');
-            } catch (error) {
-              console.error('❌ 트랜잭션 브로드캐스트 실패:', error.message);
-            }
-          }
+
           
           return {
             status: 200,
@@ -1736,22 +1736,7 @@ async function processHttpRequest(method, path, headers, body, query) {
           // 트랜잭션은 추가되었고 검증자가 블록을 생성할 예정
           console.log(`💸 토큰 전송 트랜잭션 추가됨 (대기 중)`);
           
-          // 릴레이를 통해 다른 검증자들에게 트랜잭션 브로드캐스트
-          if (relayManager && relayManager.connectionState === 'connected') {
-            try {
-              relayManager.sendMessage('transaction', {
-                transaction: transferTx,
-                timestamp: Date.now()
-              });
-              relayManager.sendMessage('transaction', {
-                transaction: feeTx,
-                timestamp: Date.now()
-              });
-              console.log('📡 릴레이를 통해 트랜잭션 브로드캐스트 완료');
-            } catch (error) {
-              console.error('❌ 트랜잭션 브로드캐스트 실패:', error.message);
-            }
-          }
+
           
           // 트랜잭션이 추가되었으므로 응답은 바로 처리
           if (true) {
@@ -5939,71 +5924,8 @@ async function generateBlock() {
         }
       }
       
-      // 릴레이 노드 보상 지급 (블록 생성 시 동시 지급)
+      // 릴레이 노드 보상 제거됨 (더 이상 사용하지 않음)
       let relayReward = 0;
-      
-      
-      if (relayManager && relayManager.connectionState === 'connected' && relayManager.relayOperatorDID) {
-        try {
-          const Transaction = require('./src/blockchain/Transaction');
-          const relayRewardAmount = 0.25; // 고정 릴레이 보상
-          
-          const relayRewardTransaction = new Transaction(
-            'did:baekya:system000000000000000000000000000000000', // 시스템에서 지급
-            relayManager.relayOperatorDID, // 릴레이 운영자에게
-            relayRewardAmount,
-            'B-Token',
-            {
-              type: 'relay_reward',
-              description: `릴레이 노드 운영 보상 (블록 #${block.index})`,
-              blockIndex: block.index,
-              relayNodeId: relayManager.relayNodeId || 'unknown',
-              validatorDID: validatorDID
-            }
-          );
-          
-          // 시스템 트랜잭션 서명
-          relayRewardTransaction.sign('test-private-key');
-          
-          // 현재 블록에 직접 추가
-          block.transactions.push(relayRewardTransaction);
-          block.merkleRoot = block.calculateMerkleRoot();
-          block.hash = block.calculateHash();
-          
-          relayReward = relayRewardAmount;
-          
-          console.log(`🌐 릴레이 노드 보상: ${relayRewardAmount}B → ${relayManager.relayOperatorDID?.substring(0, 8)}...`);
-          
-          // 릴레이DAO 기여 내역 저장
-          if (protocol.components && protocol.components.storage) {
-            try {
-              protocol.components.storage.saveContribution(relayManager.relayOperatorDID, 'relay-dao', {
-                id: `relay_reward_${block.index}_${Date.now()}`,
-                type: 'network_relay',
-                title: '블록 전파',
-                dcaId: 'dca1', // 릴레이DAO DCA ID
-                evidence: `Block ${block.index} relay operation`,
-                description: `블록 #${block.index} 릴레이 노드 운영`,
-                bValue: relayRewardAmount,
-                verified: true,
-                verifiedAt: Date.now(),
-                metadata: {
-                  blockIndex: block.index,
-                  relayNodeId: relayManager.relayNodeId || 'unknown',
-                  validatorDID: validatorDID
-                }
-              });
-            } catch (contribError) {
-              console.warn(`⚠️ 릴레이 기여 내역 저장 실패: ${contribError.message}`);
-            }
-          }
-          
-        } catch (error) {
-          console.warn('⚠️ 릴레이 노드 보상 처리 실패:', error.message);
-        }
-      } else {
-        // 릴레이 보상 조건 미충족 (로그 제거)
-      }
       
       // DCA 자동 인정 - 블록 생성 기여 (보상은 BlockchainCore에서 자동 처리됨)
       // 기여 내역은 storage에 별도 저장 (기존 함수 사용)
@@ -6124,13 +6046,28 @@ async function generateBlock() {
         }
       };
       
-      clients.forEach((connections) => {
-        connections.forEach(ws => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(blockNotification));
-          }
-        });
+      // 로컬 WebSocket 클라이언트에 전송
+      let successCount = 0;
+      let totalCount = 0;
+      
+      clients.forEach((ws, did) => {
+        totalCount++;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(blockNotification));
+          successCount++;
+        }
       });
+      
+      console.log(`📦 새 블록 #${block.index} 브로드캐스트: ${successCount}/${totalCount} 클라이언트`);
+      
+      // 연결된 클라이언트 상세 정보 (디버깅용)
+      if (totalCount === 0) {
+        console.log('ℹ️ 현재 연결된 WebSocket 클라이언트가 없습니다. 웹앱에서 로그인하여 연결하세요.');
+      } else {
+        console.log(`ℹ️ 연결된 클라이언트: ${Array.from(clients.keys()).map(did => did.substring(0, 8) + '...').join(', ')}`);
+      }
+      
+
     } else {
       // 빈 블록 생성은 정상 상황이므로 로그 제거
     }
@@ -6162,12 +6099,7 @@ process.on('SIGINT', () => {
     tunnelConnected = false;
   }
   
-  // 릴레이 매니저 정리
-  if (relayManager) {
-    console.log('🔌 릴레이 연결 정리 중...');
-    relayManager.disconnect();
-    relayManager = null;
-  }
+
 
   process.exit(0);
 });
