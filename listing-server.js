@@ -144,8 +144,8 @@ app.post('/api/register-relay', async (req, res) => {
     // 모든 중계서버에 리스트 업데이트 전파
     await propagateListToAllRelays();
     
-    // 다른 리스팅서버들에게도 업데이트 전파
-    await propagateToListingServers('relay_update', { relayData });
+    // 다른 리스팅서버들에게도 실시간 업데이트 전파
+    await propagateToListingServers('relay_add', { relayData });
     
     res.json({
       success: true,
@@ -207,8 +207,8 @@ app.post('/api/register-listing', async (req, res) => {
     
     console.log(`🌐 리스팅 서버 등록: ${url}`);
     
-    // 다른 리스팅서버들에게 업데이트 전파
-    await propagateToListingServers('listing_update', { listingData });
+    // 다른 리스팅서버들에게 실시간 업데이트 전파
+    await propagateToListingServers('listing_add', { listingData });
     
     // 새로 등록된 리스팅서버에게 현재 데이터 전송
     await syncDataToListingServer(url);
@@ -250,7 +250,7 @@ app.get('/api/listing-list', (req, res) => {
   });
 });
 
-// 리스팅서버 간 데이터 동기화 API
+// 리스팅서버 간 데이터 동기화 API (기존 - 전체 동기화용)
 app.post('/api/sync-data', async (req, res) => {
   try {
     const { relayServers: incomingRelays, listingServers: incomingListings, source } = req.body;
@@ -300,6 +300,75 @@ app.post('/api/sync-data', async (req, res) => {
     res.status(500).json({
       success: false,
       error: '데이터 동기화 중 오류가 발생했습니다'
+    });
+  }
+});
+
+// 실시간 업데이트 수신 API (새로운 - 실시간 업데이트용)
+app.post('/api/realtime-update', async (req, res) => {
+  try {
+    const { type, action, relay, relayUrl, listing, listingUrl, source, timestamp } = req.body;
+    
+    let updated = false;
+    
+    if (type === 'relay_update') {
+      if (action === 'add' && relay) {
+        // 중계서버 추가/업데이트
+        const existing = relayServers.get(relay.url);
+        if (!existing || existing.lastUpdate < relay.lastUpdate) {
+          relayServers.set(relay.url, relay);
+          updated = true;
+          console.log(`🔄 실시간 중계서버 추가: ${relay.url} (출처: ${source})`);
+        }
+      } else if (action === 'remove' && relayUrl) {
+        // 중계서버 제거
+        if (relayServers.has(relayUrl)) {
+          relayServers.delete(relayUrl);
+          updated = true;
+          console.log(`🔄 실시간 중계서버 제거: ${relayUrl} (출처: ${source})`);
+        }
+      }
+    } else if (type === 'listing_update') {
+      if (action === 'add' && listing) {
+        // 리스팅서버 추가/업데이트 (자기 자신 제외)
+        if (listing.url !== CURRENT_SERVER_URL) {
+          const existing = listingServers.get(listing.url);
+          if (!existing || existing.lastUpdate < listing.lastUpdate) {
+            listingServers.set(listing.url, listing);
+            updated = true;
+            console.log(`🔄 실시간 리스팅서버 추가: ${listing.url} (출처: ${source})`);
+          }
+        }
+      } else if (action === 'remove' && listingUrl) {
+        // 리스팅서버 제거 (자기 자신 제외)
+        if (listingUrl !== CURRENT_SERVER_URL && listingServers.has(listingUrl)) {
+          listingServers.delete(listingUrl);
+          updated = true;
+          console.log(`🔄 실시간 리스팅서버 제거: ${listingUrl} (출처: ${source})`);
+        }
+      }
+    }
+    
+    if (updated) {
+      await saveData();
+      
+      // 중계서버 업데이트인 경우 중계서버들에게도 전파
+      if (type === 'relay_update') {
+        await propagateListToAllRelays();
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: '실시간 업데이트 적용 완료',
+      updated: updated
+    });
+    
+  } catch (error) {
+    console.error('❌ 실시간 업데이트 실패:', error.message);
+    res.status(500).json({
+      success: false,
+      error: '실시간 업데이트 중 오류가 발생했습니다'
     });
   }
 });
@@ -394,6 +463,9 @@ app.delete('/api/remove-relay', async (req, res) => {
     // 모든 중계서버에 리스트 업데이트 전파
     await propagateListToAllRelays();
     
+    // 다른 리스팅서버들에게 실시간 제거 업데이트 전파
+    await propagateToListingServers('relay_remove', { url });
+    
     res.json({
       success: true,
       message: '중계서버가 제거되었습니다',
@@ -455,7 +527,7 @@ async function propagateListToAllRelays() {
   console.log('📡 리스트 업데이트 전파 완료');
 }
 
-// 리스팅 서버들에게 업데이트 전파
+// 리스팅 서버들에게 실시간 업데이트 전파
 async function propagateToListingServers(updateType, data) {
   const activeThreshold = 300000; // 5분
   const activeListings = Array.from(listingServers.values()).filter(listing => 
@@ -463,30 +535,75 @@ async function propagateToListingServers(updateType, data) {
   );
   
   if (activeListings.length === 0) {
+    console.log('🌐 활성 리스팅서버가 없습니다 - 업데이트 전파 생략');
     return;
   }
   
-  const updateData = {
-    type: updateType,
-    data: data,
-    timestamp: Date.now(),
-    source: CURRENT_SERVER_URL
-  };
+  let updatePayload = {};
+  
+  // 업데이트 타입에 따라 페이로드 구성
+  switch(updateType) {
+    case 'relay_add':
+      updatePayload = {
+        type: 'relay_update',
+        action: 'add',
+        relay: data.relayData,
+        source: CURRENT_SERVER_URL,
+        timestamp: Date.now()
+      };
+      break;
+      
+    case 'relay_remove':
+      updatePayload = {
+        type: 'relay_update',
+        action: 'remove',
+        relayUrl: data.url,
+        source: CURRENT_SERVER_URL,
+        timestamp: Date.now()
+      };
+      break;
+      
+    case 'listing_add':
+      updatePayload = {
+        type: 'listing_update',
+        action: 'add',
+        listing: data.listingData,
+        source: CURRENT_SERVER_URL,
+        timestamp: Date.now()
+      };
+      break;
+      
+    case 'listing_remove':
+      updatePayload = {
+        type: 'listing_update',
+        action: 'remove',
+        listingUrl: data.url,
+        source: CURRENT_SERVER_URL,
+        timestamp: Date.now()
+      };
+      break;
+      
+    default:
+      // 기존 방식 (전체 동기화)
+      updatePayload = {
+        type: updateType,
+        relayServers: Object.fromEntries(relayServers),
+        listingServers: Object.fromEntries(listingServers),
+        source: CURRENT_SERVER_URL,
+        timestamp: Date.now()
+      };
+  }
   
   console.log(`🌐 ${activeListings.length}개 리스팅서버에 ${updateType} 업데이트 전파 중...`);
   
   const promises = activeListings.map(async (listing) => {
     try {
-      const response = await fetch(`${listing.url}/api/sync-data`, {
+      const response = await fetch(`${listing.url}/api/realtime-update`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          ...updateData,
-          relayServers: updateType === 'relay_update' ? Object.fromEntries(relayServers) : undefined,
-          listingServers: updateType === 'listing_update' ? Object.fromEntries(listingServers) : undefined
-        }),
+        body: JSON.stringify(updatePayload),
         timeout: 5000
       });
       

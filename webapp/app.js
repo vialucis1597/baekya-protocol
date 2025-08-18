@@ -392,10 +392,8 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
       console.error('❌ 중계서버 최적화 실패:', error);
       this.hideRelayOptimizationProgress();
       
-      // 최종 폴백
-      this.relayServerUrl = 'https://baekya-relay-production.up.railway.app';
-      console.log(`🔄 최종 폴백: ${this.relayServerUrl}`);
-      return this.relayServerUrl;
+      // 폴백 제거 - 에러를 그대로 던짐
+      throw new Error('사용 가능한 중계서버가 없습니다');
     }
   }
 
@@ -1703,7 +1701,14 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
       // 로컬 환경이 아닌 경우 중계서버 최적화 먼저 실행
       if (!this.isLocalEnvironment()) {
         console.log('🌐 원격 환경 - 중계서버 최적화 시작');
-        await this.findOptimalRelay();
+        try {
+          await this.findOptimalRelay();
+        } catch (relayError) {
+          console.error('❌ 중계서버 연결 실패:', relayError);
+          this.showErrorMessage('사용 가능한 중계서버가 없습니다. 네트워크 연결을 확인하고 다시 시도해주세요.');
+          this.closeBiometricModal();
+          return;
+        }
       } else {
         console.log('🏠 로컬 환경 - 직접 연결 모드');
       }
@@ -28638,6 +28643,10 @@ class GovernanceManager {
     this.searchQuery = '';
     this.dateSort = 'newest'; // 'newest' or 'oldest'
     this.cachedActiveAccounts = 1; // 기본값 설정
+    
+    // 레포지토리 관련
+    this.selectedFiles = [];
+    this.repositories = [];
   }
 
   // 거버넌스 탭 로드
@@ -28674,6 +28683,9 @@ class GovernanceManager {
         break;
       case 'completed':
         this.loadCompleted();
+        break;
+      case 'repository':
+        this.loadRepositories();
         break;
 
     }
@@ -31394,6 +31406,570 @@ module.exports = sampleFunction;`
     
     return userProposals;
   }
+
+  // 레포지토리 관련 메서드들
+  async loadRepositories() {
+    try {
+      // 로컬 스토리지에서 레포지토리 데이터 로드
+      const repositories = JSON.parse(localStorage.getItem('repositories') || '[]');
+      this.repositories = repositories;
+      this.renderRepositories();
+    } catch (error) {
+      console.error('레포지토리 로드 실패:', error);
+      this.repositories = [];
+      this.renderRepositories();
+    }
+  }
+
+  renderRepositories() {
+    const repositoryList = document.getElementById('repositoryList');
+    if (!repositoryList) return;
+
+    if (this.repositories.length === 0) {
+      repositoryList.innerHTML = `
+        <div class="empty-state">
+          <i class="fas fa-folder-open"></i>
+          <h3>레포지토리가 없습니다</h3>
+          <p>첫 번째 레포지토리를 생성해보세요!</p>
+        </div>
+      `;
+      return;
+    }
+
+    repositoryList.innerHTML = this.repositories.map(repo => `
+      <div class="repository-item" onclick="window.dapp.viewRepository('${repo.id}')">
+        <div class="repository-header">
+          <div class="repository-icon">
+            <i class="fas fa-folder"></i>
+          </div>
+          <div class="repository-info">
+            <h3>${repo.name}</h3>
+            <p>${repo.description}</p>
+          </div>
+        </div>
+        <div class="repository-meta">
+          <div class="repository-date">
+            <i class="fas fa-calendar-alt"></i>
+            ${new Date(repo.createdAt).toLocaleDateString()}
+          </div>
+          <div class="repository-files">
+            <i class="fas fa-file"></i>
+            ${repo.fileCount}개 파일
+          </div>
+        </div>
+        ${repo.ipfsUrl ? `
+          <div class="repository-url">
+            <strong>메인 URL:</strong><br>
+            <a href="${repo.ipfsUrl}" target="_blank">${repo.ipfsUrl}</a>
+            ${repo.ipfsHash ? `
+              <br><br><strong>대체 게이트웨이:</strong><br>
+              <small>
+                <a href="https://cloudflare-ipfs.com/ipfs/${repo.ipfsHash}" target="_blank">Cloudflare</a> • 
+                <a href="https://dweb.link/ipfs/${repo.ipfsHash}" target="_blank">Dweb</a> • 
+                <a href="https://4everland.io/ipfs/${repo.ipfsHash}" target="_blank">4everland</a>
+              </small>
+            ` : ''}
+          </div>
+        ` : ''}
+      </div>
+    `).join('');
+  }
+
+  // 파일 업로드 모달 표시
+  showUploadModal() {
+    const modal = document.getElementById('uploadModal');
+    if (modal) {
+      modal.style.display = 'flex';
+      // 입력 필드 초기화
+      document.getElementById('repositoryName').value = '';
+      document.getElementById('repositoryDescription').value = '';
+      document.getElementById('selectedFiles').innerHTML = '';
+      this.selectedFiles = [];
+    }
+  }
+
+  // 파일 업로드 모달 닫기
+  closeUploadModal() {
+    const modal = document.getElementById('uploadModal');
+    if (modal) {
+      modal.style.display = 'none';
+    }
+  }
+
+  // 파일 선택 처리
+  handleFileSelection(input) {
+    const files = Array.from(input.files);
+    this.selectedFiles = files;
+    this.renderSelectedFiles();
+  }
+
+  // 선택된 파일 목록 렌더링
+  renderSelectedFiles() {
+    const container = document.getElementById('selectedFiles');
+    if (!container) return;
+
+    if (this.selectedFiles.length === 0) {
+      container.innerHTML = '';
+      return;
+    }
+
+    container.innerHTML = this.selectedFiles.map((file, index) => `
+      <div class="selected-file-item">
+        <div class="selected-file-info">
+          <div class="selected-file-icon">
+            <i class="fas fa-file"></i>
+          </div>
+          <div class="selected-file-details">
+            <h4>${file.name}</h4>
+            <p>${this.formatFileSize(file.size)} • ${file.type || 'Unknown'}</p>
+          </div>
+        </div>
+        <button class="remove-file-btn" onclick="window.dapp.removeSelectedFile(${index})">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+    `).join('');
+  }
+
+  // 선택된 파일 제거
+  removeSelectedFile(index) {
+    this.selectedFiles.splice(index, 1);
+    this.renderSelectedFiles();
+  }
+
+  // 파일 크기 포맷
+  formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
+  // 레포지토리 생성
+  async createRepository() {
+    const name = document.getElementById('repositoryName').value;
+    const description = document.getElementById('repositoryDescription').value;
+
+    if (!name) {
+      alert('레포지토리 이름을 입력해주세요.');
+      return;
+    }
+
+    if (this.selectedFiles.length === 0) {
+      alert('최소 하나의 파일을 선택해주세요.');
+      return;
+    }
+
+    try {
+      // 배포 상태 표시
+      this.showDeploymentStatus('deploying');
+
+      // 시스템 구조 파일들 가져오기
+      const systemFiles = await this.getSystemFiles();
+      
+      // 업로드된 파일들과 시스템 파일들을 합친 새 구조 생성
+      const combinedFiles = await this.combineFilesWithSystem(this.selectedFiles, systemFiles);
+
+      // IPFS에 배포
+      const ipfsUrl = await this.deployToIPFS(combinedFiles, name);
+
+      // IPFS 해시 추출
+      const ipfsHash = ipfsUrl.split('/ipfs/')[1];
+      
+      // 레포지토리 데이터 생성
+      const repository = {
+        id: Date.now().toString(),
+        name: name,
+        description: description,
+        fileCount: this.selectedFiles.length,
+        ipfsUrl: ipfsUrl,
+        ipfsHash: ipfsHash,
+        createdAt: new Date().toISOString(),
+        files: this.selectedFiles.map(file => ({
+          name: file.name,
+          size: file.size,
+          type: file.type
+        }))
+      };
+
+      // 로컬 스토리지에 저장
+      this.repositories = this.repositories || [];
+      this.repositories.push(repository);
+      localStorage.setItem('repositories', JSON.stringify(this.repositories));
+
+      // UI 업데이트
+      this.renderRepositories();
+      this.closeUploadModal();
+      this.showDeploymentStatus('success', ipfsUrl);
+
+      console.log('레포지토리 생성 완료:', repository);
+
+    } catch (error) {
+      console.error('레포지토리 생성 실패:', error);
+      this.showDeploymentStatus('error', null, error.message);
+    }
+  }
+
+  // 시스템 파일들 가져오기
+  async getSystemFiles() {
+    // 현재 프로젝트의 파일 구조를 가져옴
+    // 실제로는 서버에서 가져와야 하지만, 여기서는 하드코딩된 구조 사용
+    return {
+      'package.json': '{"name": "baekya-protocol", "version": "1.0.0"}',
+      'README.md': '# Baekya Protocol\n\n분산 네트워크 프로토콜',
+      'src/index.js': 'console.log("Baekya Protocol 시작");',
+      // 추가적인 시스템 파일들...
+    };
+  }
+
+  // 업로드된 파일과 시스템 파일 합치기
+  async combineFilesWithSystem(uploadedFiles, systemFiles) {
+    const combined = { ...systemFiles };
+
+    // 업로드된 파일들을 추가
+    for (const file of uploadedFiles) {
+      const content = await this.readFileAsText(file);
+      combined[`upload/${file.name}`] = content;
+    }
+
+    return combined;
+  }
+
+  // 파일을 텍스트로 읽기
+  readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.onerror = reject;
+      reader.readAsText(file);
+    });
+  }
+
+  // IPFS에 배포 (실제 배포)
+  async deployToIPFS(files, projectName) {
+    try {
+      // 1. HTML 페이지 생성
+      const htmlContent = this.generateProjectPage(files, projectName);
+      
+      // 2. 실제 IPFS 배포 방법 선택
+      const deploymentMethod = this.getIPFSDeploymentMethod();
+      
+      // Pinata로만 배포
+      return await this.deployToPinata(htmlContent, projectName);
+    } catch (error) {
+      throw new Error('IPFS 배포 실패: ' + error.message);
+    }
+  }
+
+  // IPFS 배포 방법 결정
+  getIPFSDeploymentMethod() {
+    // Pinata만 사용
+    const savedSettings = JSON.parse(localStorage.getItem('ipfs_settings') || '{}');
+    
+    if (savedSettings.pinataApiKey && savedSettings.pinataSecretKey) {
+      return 'pinata';
+    }
+    
+    // 설정이 불완전하면 에러 발생
+    throw new Error('Pinata API 키가 설정되지 않았습니다. IPFS 설정에서 API 키를 입력해주세요.');
+  }
+
+  // IPFS 설정 모달 표시
+  showIPFSSettingsModal() {
+    const modal = document.getElementById('ipfsSettingsModal');
+    if (modal) {
+      modal.style.display = 'flex';
+      this.loadIPFSSettings();
+    }
+  }
+
+  // IPFS 설정 모달 닫기
+  closeIPFSSettingsModal() {
+    const modal = document.getElementById('ipfsSettingsModal');
+    if (modal) {
+      modal.style.display = 'none';
+    }
+  }
+
+  // IPFS 설정 로드
+  loadIPFSSettings() {
+    const savedSettings = JSON.parse(localStorage.getItem('ipfs_settings') || '{}');
+    
+    // 설정 값들 로드
+    if (savedSettings.pinataApiKey) {
+      document.getElementById('pinataApiKey').value = savedSettings.pinataApiKey;
+    }
+    if (savedSettings.pinataSecretKey) {
+      document.getElementById('pinataSecretKey').value = savedSettings.pinataSecretKey;
+    }
+  }
+
+
+
+  // IPFS 설정 저장
+  saveIPFSSettings() {
+    const settings = {};
+    
+    // Pinata API 키들 수집
+    settings.pinataApiKey = document.getElementById('pinataApiKey').value;
+    settings.pinataSecretKey = document.getElementById('pinataSecretKey').value;
+    
+    if (!settings.pinataApiKey || !settings.pinataSecretKey) {
+      alert('Pinata API 키와 Secret 키를 모두 입력해주세요.');
+      return;
+    }
+    
+    // 설정 저장
+    localStorage.setItem('ipfs_method', 'pinata');
+    localStorage.setItem('ipfs_settings', JSON.stringify(settings));
+    
+    this.closeIPFSSettingsModal();
+    alert('Pinata 설정이 저장되었습니다!');
+  }
+
+  // Pinata API를 통한 배포
+  async deployToPinata(htmlContent, projectName) {
+    const savedSettings = JSON.parse(localStorage.getItem('ipfs_settings') || '{}');
+    const PINATA_API_KEY = savedSettings.pinataApiKey;
+    const PINATA_SECRET_KEY = savedSettings.pinataSecretKey;
+    
+    if (!PINATA_API_KEY || !PINATA_SECRET_KEY) {
+      throw new Error('Pinata API 키가 설정되지 않았습니다. IPFS 설정에서 API 키를 입력해주세요.');
+    }
+
+    const formData = new FormData();
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    formData.append('file', blob, `${projectName}.html`);
+    
+    const metadata = JSON.stringify({
+      name: `${projectName} - Baekya Repository`,
+      keyvalues: {
+        project: projectName,
+        type: 'baekya-repository',
+        created: new Date().toISOString()
+      }
+    });
+    formData.append('pinataMetadata', metadata);
+
+    const response = await fetch('https://api.pinata.cloud/pinning/pinFileToIPFS', {
+      method: 'POST',
+      headers: {
+        'pinata_api_key': PINATA_API_KEY,
+        'pinata_secret_api_key': PINATA_SECRET_KEY
+      },
+      body: formData
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Pinata 업로드 실패: ${error}`);
+    }
+
+    const result = await response.json();
+    
+    // Pinata 게이트웨이는 HTML을 차단하므로 다른 공용 게이트웨이 사용
+    const ipfsHash = result.IpfsHash;
+    
+    // 여러 게이트웨이 중 가장 안정적인 것 선택
+    const gateways = [
+      `https://ipfs.io/ipfs/${ipfsHash}`,
+      `https://cloudflare-ipfs.com/ipfs/${ipfsHash}`,
+      `https://dweb.link/ipfs/${ipfsHash}`,
+      `https://4everland.io/ipfs/${ipfsHash}`
+    ];
+    
+    console.log('✅ Pinata 업로드 완료, IPFS Hash:', ipfsHash);
+    console.log('📋 사용 가능한 게이트웨이들:', gateways);
+    
+    return gateways[0]; // ipfs.io 게이트웨이 사용
+  }
+
+
+
+
+
+  // 프로젝트 페이지 HTML 생성
+  generateProjectPage(files, projectName) {
+    const fileList = Object.keys(files).map(filename => `
+      <div class="file-item">
+        <h3>${filename}</h3>
+        <pre><code>${this.escapeHtml(files[filename])}</code></pre>
+      </div>
+    `).join('');
+
+    return `
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${projectName} - Baekya Protocol Repository</title>
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0; 
+            padding: 20px; 
+            background: #f5f5f5;
+            color: #333;
+        }
+        .container { 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header { 
+            border-bottom: 2px solid #3b82f6; 
+            padding-bottom: 20px; 
+            margin-bottom: 30px;
+        }
+        .header h1 { 
+            margin: 0; 
+            color: #3b82f6;
+        }
+        .file-item { 
+            margin-bottom: 30px; 
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .file-item h3 { 
+            margin: 0; 
+            padding: 15px 20px; 
+            background: #f9fafb;
+            border-bottom: 1px solid #e5e7eb;
+            font-size: 16px;
+            color: #374151;
+        }
+        pre { 
+            margin: 0; 
+            padding: 20px;
+            background: #1f2937;
+            color: #f9fafb;
+            overflow-x: auto;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .meta {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f0f9ff;
+            border: 1px solid #bae6fd;
+            border-radius: 6px;
+            font-size: 14px;
+            color: #0369a1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📁 ${projectName}</h1>
+            <p>Baekya Protocol Repository - 분산 프로젝트 저장소</p>
+        </div>
+        
+        <div class="files">
+            ${fileList}
+        </div>
+        
+        <div class="meta">
+            <strong>🌐 IPFS 분산 저장소</strong><br>
+            생성일: ${new Date().toLocaleString('ko-KR')}<br>
+            파일 수: ${Object.keys(files).length}개<br>
+            Powered by Baekya Protocol
+        </div>
+    </div>
+</body>
+</html>
+    `;
+  }
+
+  // HTML 이스케이프
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  // 랜덤 해시 생성
+  generateRandomHash() {
+    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let result = '';
+    for (let i = 0; i < 44; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  }
+
+  // 배포 상태 표시
+  showDeploymentStatus(status, url = null, error = null) {
+    const container = document.querySelector('.upload-section');
+    if (!container) return;
+
+    let existingStatus = container.querySelector('.deployment-status');
+    if (existingStatus) {
+      existingStatus.remove();
+    }
+
+    let content = '';
+    
+    if (status === 'deploying') {
+      content = `
+        <div class="deployment-progress">
+          <div class="deployment-spinner"></div>
+          <span>IPFS에 배포 중...</span>
+        </div>
+      `;
+    } else if (status === 'success') {
+      content = `
+        <div class="deployment-progress">
+          <i class="fas fa-check-circle"></i>
+          <span>배포 완료!</span>
+        </div>
+        <div style="margin-top: 0.5rem;">
+          <strong>IPFS URL:</strong><br>
+          <a href="${url}" target="_blank">${url}</a>
+        </div>
+      `;
+    } else if (status === 'error') {
+      content = `
+        <div class="deployment-progress">
+          <i class="fas fa-exclamation-circle"></i>
+          <span>배포 실패: ${error}</span>
+        </div>
+      `;
+    }
+
+    const statusDiv = document.createElement('div');
+    statusDiv.className = `deployment-status ${status}`;
+    statusDiv.innerHTML = content;
+    container.appendChild(statusDiv);
+
+    // 성공/실패 메시지는 5초 후 자동 제거
+    if (status !== 'deploying') {
+      setTimeout(() => {
+        if (statusDiv.parentNode) {
+          statusDiv.remove();
+        }
+      }, 5000);
+    }
+  }
+
+  // 레포지토리 상세 보기
+  viewRepository(repositoryId) {
+    const repository = this.repositories.find(repo => repo.id === repositoryId);
+    if (!repository) return;
+
+    // 레포지토리 상세 모달이나 페이지로 이동
+    if (repository.ipfsUrl) {
+      window.open(repository.ipfsUrl, '_blank');
+    } else {
+      alert('레포지토리 URL이 없습니다.');
+    }
+  }
 }
 
 // BrotherhoodDApp 클래스에 거버넌스 관리자 추가
@@ -31419,6 +31995,61 @@ if (typeof window !== 'undefined') {
       
       window.dapp.closeCreateGovernanceProposalModal = function() {
         this.governanceManager.closeCreateProposalModal();
+      };
+
+      // 레포지토리 관련 함수들 추가
+      window.dapp.showUploadModal = function() {
+        this.governanceManager.showUploadModal();
+      };
+
+      window.dapp.closeUploadModal = function() {
+        this.governanceManager.closeUploadModal();
+      };
+
+      window.dapp.handleFileSelection = function(input) {
+        this.governanceManager.handleFileSelection(input);
+      };
+
+      window.dapp.removeSelectedFile = function(index) {
+        this.governanceManager.removeSelectedFile(index);
+      };
+
+      window.dapp.createRepository = function() {
+        this.governanceManager.createRepository();
+      };
+
+      window.dapp.viewRepository = function(repositoryId) {
+        this.governanceManager.viewRepository(repositoryId);
+      };
+
+      // IPFS 설정 관련 함수들 추가
+      window.dapp.showIPFSSettingsModal = function() {
+        this.governanceManager.showIPFSSettingsModal();
+      };
+
+      window.dapp.closeIPFSSettingsModal = function() {
+        this.governanceManager.closeIPFSSettingsModal();
+      };
+
+      window.dapp.saveIPFSSettings = function() {
+        this.governanceManager.saveIPFSSettings();
+      };
+
+      // 드래그 앤 드롭 관련 함수들 추가
+      window.dapp.handleDragOver = function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.target.closest('.upload-area').classList.add('drag-over');
+      };
+
+      window.dapp.handleDrop = function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.target.closest('.upload-area').classList.remove('drag-over');
+        
+        const files = Array.from(event.dataTransfer.files);
+        this.governanceManager.selectedFiles = files;
+        this.governanceManager.renderSelectedFiles();
       };
       
       window.dapp.handleCoreStructureUpload = function(input) {

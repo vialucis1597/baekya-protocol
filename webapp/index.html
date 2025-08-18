@@ -15,6 +15,13 @@
     <link rel="apple-touch-icon" href="icons/icon-192x192.png">
     <meta name="theme-color" content="#000000">
     
+    <!-- IPFS 라이브러리들 (현재 사용하지 않음) -->
+    <!-- <script src="https://unpkg.com/web3.storage/dist/bundle.js"></script> -->
+    <!-- <script src="https://unpkg.com/ipfs-core@0.18.1/dist/index.min.js"></script> -->
+    
+    <!-- IPFS 설정 -->
+    <script src="ipfs-config.js"></script>
+    
     <!-- 헤더 -->
     <header class="header">
         <div class="container">
@@ -532,6 +539,10 @@
                     <i class="fas fa-code"></i>
                     <span>시스템</span>
                 </button>
+                <button class="governance-tab" data-tab="repository" onclick="window.dapp.switchGovernanceTab('repository')">
+                    <i class="fas fa-folder-open"></i>
+                    <span>레포지토리</span>
+                </button>
             </div>
 
             <!-- 제안 탭 콘텐츠 -->
@@ -633,6 +644,57 @@
                             </button>
                         </div>
                         <div class="file-content" id="fileContent">
+                            <!-- 파일 내용이 표시됩니다 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 레포지토리 탭 콘텐츠 -->
+            <div id="governance-repository" class="governance-tab-content">
+                <div class="system-container">
+                    <div class="system-header">
+                        <h2><i class="fas fa-folder-open"></i> 레포지토리</h2>
+                        <div class="system-actions">
+                            <button class="btn-secondary" onclick="window.dapp.showIPFSSettingsModal()">
+                                <i class="fas fa-cog"></i> IPFS 설정
+                            </button>
+                            <button class="btn-primary download-btn" onclick="window.dapp.showUploadModal()">
+                                <i class="fas fa-upload"></i> 생성하기
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 레포지토리 목록 -->
+                    <div class="repository-list-container">
+                        <div id="repositoryList" class="repository-list">
+                            <!-- 레포지토리 목록이 동적으로 생성됩니다 -->
+                        </div>
+                    </div>
+
+                    <!-- 파일 트리 (시스템 구조 + 업로드된 파일) -->
+                    <div class="file-tree-container" style="display: none;" id="repositoryFileTree">
+                        <div class="select-all-controls">
+                            <button class="select-all-btn" onclick="window.dapp.selectAllRepositoryFiles()">전체 선택</button>
+                            <button class="select-all-btn" onclick="window.dapp.deselectAllRepositoryFiles()">전체 해제</button>
+                            <button class="btn-primary" onclick="window.dapp.downloadSelectedRepositoryFiles()">
+                                <i class="fas fa-download"></i> 다운로드
+                            </button>
+                        </div>
+                        <div class="file-tree" id="repositoryFileTreeContent">
+                            <!-- 파일 트리가 동적으로 생성됩니다 -->
+                        </div>
+                    </div>
+
+                    <!-- 파일 뷰어 -->
+                    <div class="file-viewer" id="repositoryFileViewer" style="display: none;">
+                        <div class="file-viewer-header">
+                            <div class="file-path" id="repositoryFilePath"></div>
+                            <button class="close-viewer-btn" onclick="window.dapp.closeRepositoryFileViewer()">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <div class="file-content" id="repositoryFileContent">
                             <!-- 파일 내용이 표시됩니다 -->
                         </div>
                     </div>
@@ -855,6 +917,86 @@
                 </div>
                 <div class="modal-footer">
                     <button class="btn-secondary" onclick="window.dapp.closeRecycleQRModal()">취소</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- IPFS 설정 모달 -->
+    <div id="ipfsSettingsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-cog"></i> IPFS 배포 설정</h3>
+                <button class="modal-close" onclick="window.dapp.closeIPFSSettingsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="settings-section">
+                    <h4>Pinata API 설정</h4>
+                    <div class="form-group">
+                        <label for="pinataApiKey">API Key</label>
+                        <input type="text" id="pinataApiKey" placeholder="Pinata API 키를 입력하세요">
+                    </div>
+                    <div class="form-group">
+                        <label for="pinataSecretKey">Secret Key</label>
+                        <input type="password" id="pinataSecretKey" placeholder="Pinata Secret 키를 입력하세요">
+                    </div>
+                    <div class="info-box">
+                        <i class="fas fa-info-circle"></i>
+                        Pinata API 키는 <a href="https://pinata.cloud" target="_blank">pinata.cloud</a>에서 무료로 발급받을 수 있습니다.
+                    </div>
+                </div>
+
+
+                
+                <div class="modal-actions">
+                    <button type="button" class="btn-secondary" onclick="window.dapp.closeIPFSSettingsModal()">취소</button>
+                    <button type="button" class="btn-primary" onclick="window.dapp.saveIPFSSettings()">설정 저장</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 파일 업로드 모달 -->
+    <div id="uploadModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-upload"></i> 레포지토리 생성</h3>
+                <button class="modal-close" onclick="window.dapp.closeUploadModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="upload-section">
+                    <div class="form-group">
+                        <label for="repositoryName">레포지토리 이름</label>
+                        <input type="text" id="repositoryName" placeholder="레포지토리 이름을 입력하세요">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="repositoryDescription">설명</label>
+                        <textarea id="repositoryDescription" placeholder="레포지토리에 대한 설명을 입력하세요" rows="3"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>파일 업로드</label>
+                        <div class="upload-area" onclick="document.getElementById('fileInput').click()" 
+                             ondragover="window.dapp.handleDragOver(event)" 
+                             ondrop="window.dapp.handleDrop(event)">
+                            <div class="upload-content">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <p>파일을 드래그하여 놓거나 클릭하여 선택하세요</p>
+                                <small>여러 파일을 선택할 수 있습니다</small>
+                            </div>
+                        </div>
+                        <input type="file" id="fileInput" multiple style="display: none;" onchange="window.dapp.handleFileSelection(this)">
+                    </div>
+                    
+                    <div id="selectedFiles" class="selected-files">
+                        <!-- 선택된 파일 목록이 표시됩니다 -->
+                    </div>
+                </div>
+                
+                <div class="modal-actions">
+                    <button type="button" class="btn-secondary" onclick="window.dapp.closeUploadModal()">취소</button>
+                    <button type="button" class="btn-primary" onclick="window.dapp.createRepository()">레포지토리 생성</button>
                 </div>
             </div>
         </div>

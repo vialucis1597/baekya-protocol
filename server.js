@@ -144,14 +144,32 @@ async function handleTunnelRequest(request) {
     const tunnelHeaders = {
       ...headers,
       'x-tunnel-request': 'true',
-      'x-tunnel-body': requestBody || '' // body를 헤더로 전달
+      'x-tunnel-body': requestBody ? Buffer.from(requestBody, 'utf8').toString('base64') : '' // body를 base64로 인코딩하여 헤더로 전달
     };
     
-    // 로컬 서버에 요청 전달 (GET 요청으로 변경하여 body parser 우회)
+    // 서버 상태 확인 (중요한 요청의 경우)
+    if (isImportantRequest) {
+      try {
+        const healthCheck = await fetch(`http://localhost:${port}/api/status`, {
+          method: 'GET',
+          timeout: 5000,
+          signal: AbortSignal.timeout(5000)
+        });
+        if (!healthCheck.ok) {
+          throw new Error(`서버 상태 확인 실패: ${healthCheck.status}`);
+        }
+      } catch (healthError) {
+        console.warn(`⚠️ 서버 헬스체크 실패: ${healthError.message}`);
+      }
+    }
+    
+    // 로컬 서버에 요청 전달 (타임아웃 및 에러 처리 강화)
     const response = await fetch(`http://localhost:${port}${path}${queryString}`, {
       method: method,
       headers: tunnelHeaders,
-      body: method !== 'GET' ? requestBody : undefined
+      body: method !== 'GET' ? requestBody : undefined,
+      timeout: 30000, // 30초 타임아웃
+      signal: AbortSignal.timeout(30000)
     });
     
     const responseData = await response.json();
@@ -173,6 +191,40 @@ async function handleTunnelRequest(request) {
   } catch (error) {
     console.error(`❌ 터널 요청 처리 실패 (${requestId}):`, error);
     
+    // 연결 오류의 경우 재시도 시도
+    if (error.code === 'ECONNRESET' || error.code === 'ECONNREFUSED' || error.message.includes('fetch failed')) {
+      console.log(`🔄 연결 오류로 인한 재시도 시도 (${requestId})`);
+      
+      try {
+        // 잠시 대기 후 재시도
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        const retryResponse = await fetch(`http://localhost:${port}${path}${queryString}`, {
+          method: method,
+          headers: tunnelHeaders,
+          body: method !== 'GET' ? requestBody : undefined,
+          timeout: 15000, // 재시도 시 더 짧은 타임아웃
+          signal: AbortSignal.timeout(15000)
+        });
+        
+        const retryData = await retryResponse.json();
+        
+        const retryResponseMessage = {
+          type: 'http_response',
+          requestId: requestId,
+          status: retryResponse.status,
+          body: retryData
+        };
+        
+        tunnelWs.send(JSON.stringify(retryResponseMessage));
+        console.log(`✅ 터널 요청 재시도 성공 (${requestId})`);
+        return;
+        
+      } catch (retryError) {
+        console.error(`❌ 터널 요청 재시도 실패 (${requestId}):`, retryError.message);
+      }
+    }
+    
     // 오류 응답 전송
     const errorResponse = {
       type: 'http_response',
@@ -185,7 +237,11 @@ async function handleTunnelRequest(request) {
       }
     };
     
-    tunnelWs.send(JSON.stringify(errorResponse));
+    try {
+      tunnelWs.send(JSON.stringify(errorResponse));
+    } catch (wsError) {
+      console.error('❌ 터널 오류 응답 전송 실패:', wsError.message);
+    }
   }
 }
 
@@ -228,6 +284,10 @@ async function propagateRelayListUpdate() {
 
 // 모든 중계서버에 블록 전파
 async function propagateBlockToAllRelays(blockData) {
+  // 먼저 리스팅서버에서 최신 중계서버 리스트 가져오기
+  console.log('🔄 블록 전파 전 중계서버 리스트 업데이트...');
+  await fetchRelayListFromListingServer();
+  
   const allRelays = Array.from(relayServersList.values());
   const relayList = allRelays.filter(relay => 
     Date.now() - relay.lastUpdate < 300000 // 5분 이내 활성 중계서버만
@@ -416,7 +476,13 @@ async function fetchRelayListFromListingServer() {
       
       if (response.ok) {
         const data = await response.json();
+        console.log(`📋 리스팅서버(${listingServer}) 응답:`, data);
         if (data.success && data.relays) {
+          console.log(`📊 전체 중계서버: ${data.relays.length}개`);
+          data.relays.forEach((relay, index) => {
+            console.log(`  ${index + 1}. ${relay.url} (상태: ${relay.status})`);
+          });
+          
           // 온라인 중계서버만 필터링
           const onlineRelays = data.relays.filter(relay => relay.status === 'online');
           
@@ -2998,7 +3064,9 @@ app.post('/api/login', async (req, res) => {
       
       if (tunnelBody) {
         try {
-          const parsedBody = JSON.parse(tunnelBody);
+          // base64 디코딩 후 JSON 파싱
+          const decodedBody = Buffer.from(tunnelBody, 'base64').toString('utf8');
+          const parsedBody = JSON.parse(decodedBody);
           username = parsedBody.username;
           password = parsedBody.password;
           deviceUUID = parsedBody.deviceUUID;
@@ -3270,7 +3338,9 @@ app.post('/api/invite-code', async (req, res) => {
       
       if (tunnelBody) {
         try {
-          const parsedBody = JSON.parse(tunnelBody);
+          // base64 디코딩 후 JSON 파싱
+          const decodedBody = Buffer.from(tunnelBody, 'base64').toString('utf8');
+          const parsedBody = JSON.parse(decodedBody);
           userDID = parsedBody.userDID;
           communicationAddress = parsedBody.communicationAddress;
         } catch (parseError) {
@@ -3694,7 +3764,9 @@ app.post('/api/transfer', async (req, res) => {
       
       if (tunnelBody) {
         try {
-          const parsedBody = JSON.parse(tunnelBody);
+          // base64 디코딩 후 JSON 파싱
+          const decodedBody = Buffer.from(tunnelBody, 'base64').toString('utf8');
+          const parsedBody = JSON.parse(decodedBody);
           fromDID = parsedBody.fromDID;
           toAddress = parsedBody.toAddress;
           amount = parsedBody.amount;
@@ -5169,7 +5241,9 @@ app.post('/api/governance/proposals', async (req, res) => {
       
       if (tunnelBody) {
         try {
-          const parsedBody = JSON.parse(tunnelBody);
+          // base64 디코딩 후 JSON 파싱
+          const decodedBody = Buffer.from(tunnelBody, 'base64').toString('utf8');
+          const parsedBody = JSON.parse(decodedBody);
           title = parsedBody.title;
           description = parsedBody.description;
           label = parsedBody.label;

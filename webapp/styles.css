@@ -2552,6 +2552,8 @@
     background: rgba(0, 0, 0, 0.5);
     z-index: 1000;
     backdrop-filter: blur(4px);
+    align-items: center;
+    justify-content: center;
   }
   
   .modal.active {
@@ -5718,6 +5720,8 @@
     background: rgba(0, 0, 0, 0.5);
     z-index: 1000;
     backdrop-filter: blur(4px);
+    align-items: center;
+    justify-content: center;
   }
   
   .modal.active {
@@ -10939,6 +10943,8 @@
     background: rgba(0, 0, 0, 0.5);
     z-index: 1000;
     backdrop-filter: blur(4px);
+    align-items: center;
+    justify-content: center;
   }
   
   .modal.active {
@@ -18049,6 +18055,8 @@
     background: rgba(0, 0, 0, 0.5);
     z-index: 1000;
     backdrop-filter: blur(4px);
+    align-items: center;
+    justify-content: center;
   }
   
   .modal.active {
@@ -21215,6 +21223,8 @@
     background: rgba(0, 0, 0, 0.5);
     z-index: 1000;
     backdrop-filter: blur(4px);
+    align-items: center;
+    justify-content: center;
   }
   
   .modal.active {
@@ -26436,6 +26446,8 @@
     background: rgba(0, 0, 0, 0.5);
     z-index: 1000;
     backdrop-filter: blur(4px);
+    align-items: center;
+    justify-content: center;
   }
   
   .modal.active {
@@ -44567,5 +44579,326 @@
 
 .btn-text {
   display: inline-block;
+}
+
+/* 레포지토리 관련 스타일 */
+.repository-list-container {
+  margin-top: 2rem;
+}
+
+.repository-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1.5rem;
+}
+
+.repository-item {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 1.5rem;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.repository-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  border-color: var(--primary-color);
+}
+
+.repository-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.repository-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--primary-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 1.2rem;
+}
+
+.repository-info h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: var(--text-primary);
+}
+
+.repository-info p {
+  margin: 0.25rem 0 0 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.repository-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 1rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.repository-date {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.repository-files {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.repository-url {
+  margin-top: 0.75rem;
+  padding: 0.5rem;
+  background: var(--bg-primary);
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: var(--primary-color);
+  word-break: break-all;
+  border: 1px solid var(--border-color);
+}
+
+.selected-files {
+  margin-top: 1rem;
+}
+
+.selected-file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+}
+
+.selected-file-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.selected-file-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: var(--primary-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 0.9rem;
+}
+
+.selected-file-details h4 {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+
+.selected-file-details p {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.remove-file-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: #dc3545;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+}
+
+.remove-file-btn:hover {
+  background: #c82333;
+}
+
+/* IPFS 배포 상태 */
+.deployment-status {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.deployment-status.deploying {
+  background: #fef3c7;
+  border-color: #fbbf24;
+  color: #f59e0b;
+}
+
+.deployment-status.success {
+  background: #d1fae5;
+  border-color: #10b981;
+  color: #059669;
+}
+
+.deployment-status.error {
+  background: #fef2f2;
+  border-color: #ef4444;
+  color: #dc2626;
+}
+
+.deployment-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.deployment-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid transparent;
+  border-top: 2px solid currentColor;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 반응형 레포지토리 목록 */
+@media (max-width: 768px) {
+  .repository-list {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  
+  .repository-item {
+    padding: 1rem;
+  }
+  
+  .repository-meta {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+}
+
+/* Empty state 스타일 */
+.empty-state {
+  text-align: center;
+  padding: 3rem;
+  color: var(--text-secondary);
+}
+
+.empty-state i {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  color: var(--border-color);
+}
+
+.empty-state h3 {
+  margin: 0 0 0.5rem 0;
+  color: var(--text-primary);
+}
+
+.empty-state p {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+/* IPFS 설정 모달 스타일 */
+.settings-section {
+  margin-bottom: 2rem;
+}
+
+.settings-section h4 {
+  margin: 0 0 1rem 0;
+  color: var(--text-primary);
+  font-size: 1.1rem;
+}
+
+.settings-section .form-group {
+  margin-bottom: 1rem;
+}
+
+.settings-section .form-group label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  cursor: pointer;
+  margin-bottom: 0.25rem;
+}
+
+.settings-section .form-group input[type="radio"] {
+  margin: 0;
+}
+
+.settings-section .form-group small {
+  display: block;
+  margin-left: 1.5rem;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.info-box {
+  padding: 1rem;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  color: #0369a1;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.info-box i {
+  margin-top: 0.1rem;
+  flex-shrink: 0;
+}
+
+.info-box a {
+  color: #0369a1;
+  text-decoration: underline;
+}
+
+.info-box a:hover {
+  color: #075985;
+}
+
+/* 다크 테마 대응 */
+@media (prefers-color-scheme: dark) {
+  .info-box {
+    background: #1e3a8a;
+    border-color: #3b82f6;
+    color: #93c5fd;
+  }
+  
+  .info-box a {
+    color: #93c5fd;
+  }
+  
+  .info-box a:hover {
+    color: #dbeafe;
+  }
 }
   

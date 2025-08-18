@@ -7,6 +7,9 @@ const WebSocket = require('ws');
 const http = require('http');
 const { v4: uuidv4 } = require('uuid');
 
+// 중계서버 고유 ID
+const nodeId = uuidv4();
+
 const app = express();
 const port = process.env.PORT || 3000;
 const server = http.createServer(app);
@@ -217,6 +220,64 @@ async function registerToListingServer() {
   }
 }
 
+// 리스팅 서버에서 중계서버 제거
+async function removeFromListingServer() {
+  // 먼저 자동 탐색으로 리스팅 서버 찾기
+  const discoveredServer = await discoverListingServer();
+  
+  const listingServers = [];
+  if (discoveredServer) {
+    listingServers.push(discoveredServer);
+  }
+  
+  // 백업 서버들 추가 (배포 환경 전용)
+  listingServers.push(
+    'https://bplisting.fly.dev'
+  );
+  
+  // 중계서버 URL 동적 감지
+  let relayUrl = null;
+  
+  if (process.env.RELAY_SERVER_URL) {
+    relayUrl = process.env.RELAY_SERVER_URL;
+  } else if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+    relayUrl = `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+  } else if (process.env.FLY_APP_NAME) {
+    const flyRegion = process.env.FLY_REGION || '';
+    const flyAllocId = process.env.FLY_ALLOC_ID || '';
+    if (flyRegion && flyAllocId) {
+      relayUrl = `https://${process.env.FLY_APP_NAME}.fly.dev`;
+    }
+  }
+  
+  if (!relayUrl) {
+    console.log('⚠️ 중계서버 URL을 감지할 수 없어 리스팅서버에서 제거할 수 없습니다');
+    return;
+  }
+  
+  for (const listingServer of listingServers) {
+    try {
+      const response = await fetch(`${listingServer}/api/remove-relay`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          url: relayUrl
+        }),
+        timeout: 5000
+      });
+      
+      if (response.ok) {
+        console.log(`✅ 리스팅 서버에서 제거 성공: ${listingServer} (URL: ${relayUrl})`);
+        break;
+      }
+    } catch (error) {
+      console.log(`❌ 리스팅 서버 제거 실패: ${listingServer} (${error.message})`);
+    }
+  }
+}
+
 // 핑 API (웹앱 최적화용)
 app.get('/api/ping', (req, res) => {
   res.json({
@@ -283,11 +344,11 @@ async function forwardThroughTunnel(tunnelWs, requestData) {
     const requestId = uuidv4();
     const { method, path, body, query, headers } = requestData;
     
-    // 요청 타임아웃 설정 (10초)
+    // 요청 타임아웃 설정 (45초로 연장)
     const timeout = setTimeout(() => {
       pendingRequests.delete(requestId);
       reject(new Error('터널 요청 타임아웃'));
-    }, 10000);
+    }, 45000);
     
     // 대기 중인 요청에 등록
     pendingRequests.set(requestId, { 
@@ -366,13 +427,29 @@ app.post('/api/block-propagation', (req, res) => {
   if (type === 'block_propagation' && block) {
     console.log(`📦 블록 #${block.index} 전파 수신 (검증자: ${validatorDID?.substring(0, 8)}...)`);
     
-    // 연결된 클라이언트들에게 블록 정보 전파
-    broadcastToClients({
-      type: 'new_block',
+    // 연결된 모든 WebSocket 클라이언트들에게 블록 전파
+    const blockMessage = {
+      type: 'new_block_received',
       block: block,
-      validatorDID: validatorDID,
+      source: 'external',
+      sourceRelayId: nodeId,
+      originalValidatorDID: validatorDID,
       timestamp: timestamp
+    };
+    
+    let connectedCount = 0;
+    wss.clients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN) {
+        try {
+          client.send(JSON.stringify(blockMessage));
+          connectedCount++;
+        } catch (error) {
+          console.warn('⚠️ 블록 전파 실패:', error.message);
+        }
+      }
     });
+    
+    console.log(`📤 블록 #${block.index}을 연결된 ${connectedCount}개 WebSocket 클라이언트에 전파`);
   }
   
   res.json({
@@ -546,6 +623,10 @@ wss.on('connection', (ws, req) => {
       console.log('🔌 WebSocket 터널 연결 종료');
       tunnelConnection = null;
       connectedValidator = null;
+      
+      // 터널 연결이 해제되면 리스팅서버에서 이 중계서버 삭제 요청
+      console.log('⚠️ 터널 연결 해제됨 - 리스팅서버에서 중계서버 제거 요청');
+      removeFromListingServer();
     });
     
     return; // 일반 WebSocket 로직으로 진행하지 않음
@@ -747,6 +828,12 @@ wss.on('connection', (ws, req) => {
         type: 'node_left',
         nodeId: nodeId
       }, nodeId);
+      
+      // 모든 풀노드가 연결 해제되면 리스팅서버에서 이 중계서버 삭제 요청
+      if (registeredNodes.size === 0) {
+        console.log('⚠️ 모든 풀노드 연결 해제됨 - 리스팅서버에서 중계서버 제거 요청');
+        removeFromListingServer();
+      }
       
     } else if (connectionType === 'user' && sessionId) {
       const session = userSessions.get(sessionId);
