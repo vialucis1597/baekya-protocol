@@ -44730,9 +44730,129 @@
   font-size: 0.8rem;
 }
 
-.remove-file-btn:hover {
-  background: #c82333;
-}
+  .remove-file-btn:hover {
+    background: #c82333;
+  }
+
+  /* 업로드 방법 선택 버튼들 */
+  .upload-methods {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .upload-method-btn {
+    flex: 1;
+    padding: 0.75rem;
+    border: 2px dashed var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+  }
+
+  .upload-method-btn:hover {
+    border-color: var(--primary-color);
+    background: rgba(59, 130, 246, 0.05);
+    color: var(--primary-color);
+  }
+
+  .upload-method-btn i {
+    font-size: 1.1rem;
+  }
+
+  /* 선택된 파일 헤더 */
+  .selected-files-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .selected-files-header h4 {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--text-primary);
+  }
+
+  .btn-secondary.small {
+    font-size: 0.8rem;
+    padding: 0.4rem 0.8rem;
+  }
+
+  /* 레포지토리 액션 버튼들 */
+  .repository-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+
+  .repository-actions .btn-primary.small,
+  .repository-actions .btn-secondary.small {
+    font-size: 0.8rem;
+    padding: 0.4rem 0.8rem;
+  }
+
+  /* 다운로드 상태 */
+  .download-status {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: white;
+    padding: 1rem 1.5rem;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    border-left: 4px solid var(--primary-color);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    z-index: 10000;
+    transform: translateX(100%);
+    opacity: 0;
+    transition: all 0.3s ease;
+    min-width: 250px;
+  }
+
+  .download-status.show {
+    transform: translateX(0);
+    opacity: 1;
+  }
+
+  .download-status.loading {
+    border-left-color: #f59e0b;
+  }
+
+  .download-status.success {
+    border-left-color: #10b981;
+  }
+
+  .download-status.error {
+    border-left-color: #ef4444;
+  }
+
+  .download-status i {
+    font-size: 1.2rem;
+  }
+
+  .download-status.loading i {
+    color: #f59e0b;
+  }
+
+  .download-status.success i {
+    color: #10b981;
+  }
+
+  .download-status.error i {
+    color: #ef4444;
+  }
 
 /* IPFS 배포 상태 */
 .deployment-status {

@@ -28687,7 +28687,6 @@ class GovernanceManager {
       case 'repository':
         this.loadRepositories();
         break;
-
     }
   }
 
@@ -31469,6 +31468,15 @@ module.exports = sampleFunction;`
                 <a href="https://4everland.io/ipfs/${repo.ipfsHash}" target="_blank">4everland</a>
               </small>
             ` : ''}
+            <br><br>
+            <div class="repository-actions">
+              <button class="btn-primary small" onclick="window.dapp.viewRepository('${repo.ipfsUrl}')">
+                <i class="fas fa-external-link-alt"></i> 보기
+              </button>
+              <button class="btn-secondary small" onclick="window.dapp.downloadRepository('${repo.id}')">
+                <i class="fas fa-download"></i> 가져오기
+              </button>
+            </div>
           </div>
         ` : ''}
       </div>
@@ -31499,7 +31507,20 @@ module.exports = sampleFunction;`
   // 파일 선택 처리
   handleFileSelection(input) {
     const files = Array.from(input.files);
-    this.selectedFiles = files;
+    
+    // 파일에 상대 경로 정보 추가
+    this.selectedFiles = files.map(file => {
+      // webkitRelativePath가 있으면 사용 (폴더 업로드), 없으면 파일명만 사용
+      const path = file.webkitRelativePath || file.name;
+      return {
+        file: file,
+        path: path,
+        name: file.name,
+        size: file.size,
+        type: file.type
+      };
+    });
+    
     this.renderSelectedFiles();
   }
 
@@ -31513,22 +31534,52 @@ module.exports = sampleFunction;`
       return;
     }
 
-    container.innerHTML = this.selectedFiles.map((file, index) => `
-      <div class="selected-file-item">
-        <div class="selected-file-info">
-          <div class="selected-file-icon">
-            <i class="fas fa-file"></i>
-          </div>
-          <div class="selected-file-details">
-            <h4>${file.name}</h4>
-            <p>${this.formatFileSize(file.size)} • ${file.type || 'Unknown'}</p>
-          </div>
-        </div>
-        <button class="remove-file-btn" onclick="window.dapp.removeSelectedFile(${index})">
-          <i class="fas fa-times"></i>
+    container.innerHTML = `
+      <div class="selected-files-header">
+        <h4>선택된 파일들 (${this.selectedFiles.length}개)</h4>
+        <button class="btn-secondary small" onclick="window.dapp.clearSelectedFiles()">
+          <i class="fas fa-trash"></i> 전체 삭제
         </button>
       </div>
-    `).join('');
+      ${this.selectedFiles.map((fileObj, index) => `
+        <div class="selected-file-item">
+          <div class="selected-file-info">
+            <div class="selected-file-icon">
+              <i class="fas ${this.getFileIcon(fileObj.path)}"></i>
+            </div>
+            <div class="selected-file-details">
+              <h4>${fileObj.path}</h4>
+              <p>${this.formatFileSize(fileObj.size)} • ${fileObj.type || 'Unknown'}</p>
+            </div>
+          </div>
+          <button class="remove-file-btn" onclick="window.dapp.removeSelectedFile(${index})">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+      `).join('')}
+    `;
+  }
+
+  // 파일 타입에 따른 아이콘 반환
+  getFileIcon(filePath) {
+    const ext = filePath.split('.').pop().toLowerCase();
+    switch (ext) {
+      case 'js': case 'jsx': case 'ts': case 'tsx': return 'fa-file-code';
+      case 'html': case 'htm': return 'fa-file-code';
+      case 'css': case 'scss': case 'sass': return 'fa-file-code';
+      case 'json': case 'xml': return 'fa-file-code';
+      case 'md': case 'txt': return 'fa-file-alt';
+      case 'png': case 'jpg': case 'jpeg': case 'gif': case 'svg': return 'fa-file-image';
+      case 'pdf': return 'fa-file-pdf';
+      case 'zip': case 'rar': case '7z': return 'fa-file-archive';
+      default: return 'fa-file';
+    }
+  }
+
+  // 전체 파일 삭제
+  clearSelectedFiles() {
+    this.selectedFiles = [];
+    this.renderSelectedFiles();
   }
 
   // 선택된 파일 제거
@@ -31586,10 +31637,11 @@ module.exports = sampleFunction;`
         ipfsUrl: ipfsUrl,
         ipfsHash: ipfsHash,
         createdAt: new Date().toISOString(),
-        files: this.selectedFiles.map(file => ({
-          name: file.name,
-          size: file.size,
-          type: file.type
+        files: this.selectedFiles.map(fileObj => ({
+          name: fileObj.name,
+          path: fileObj.path,
+          size: fileObj.size,
+          type: fileObj.type
         }))
       };
 
@@ -31617,20 +31669,22 @@ module.exports = sampleFunction;`
     // 실제로는 서버에서 가져와야 하지만, 여기서는 하드코딩된 구조 사용
     return {
       'package.json': '{"name": "baekya-protocol", "version": "1.0.0"}',
-      'README.md': '# Baekya Protocol\n\n분산 네트워크 프로토콜',
-      'src/index.js': 'console.log("Baekya Protocol 시작");',
+      'README.md': '# BROTHERHOOD\n\n분산 네트워크 프로토콜',
+      'src/index.js': 'console.log("BROTHERHOOD 시작");',
       // 추가적인 시스템 파일들...
     };
   }
 
   // 업로드된 파일과 시스템 파일 합치기
   async combineFilesWithSystem(uploadedFiles, systemFiles) {
-    const combined = { ...systemFiles };
+    // 시스템 파일은 제거하고 업로드된 파일만 사용
+    const combined = {};
 
-    // 업로드된 파일들을 추가
-    for (const file of uploadedFiles) {
-      const content = await this.readFileAsText(file);
-      combined[`upload/${file.name}`] = content;
+    // 업로드된 파일들만 추가
+    for (const fileObj of uploadedFiles) {
+      const content = await this.readFileAsText(fileObj.file);
+      // 파일 경로 그대로 사용 (폴더 구조 유지)
+      combined[fileObj.path] = content;
     }
 
     return combined;
@@ -31789,14 +31843,11 @@ module.exports = sampleFunction;`
 
 
 
-  // 프로젝트 페이지 HTML 생성
+  // 프로젝트 페이지 HTML 생성 (GitHub 스타일)
   generateProjectPage(files, projectName) {
-    const fileList = Object.keys(files).map(filename => `
-      <div class="file-item">
-        <h3>${filename}</h3>
-        <pre><code>${this.escapeHtml(files[filename])}</code></pre>
-      </div>
-    `).join('');
+    // 파일 구조를 트리 형태로 변환
+    const fileTree = this.buildFileTree(files);
+    const fileData = this.generateFileDataScript(files);
 
     return `
 <!DOCTYPE html>
@@ -31804,87 +31855,561 @@ module.exports = sampleFunction;`
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${projectName} - Baekya Protocol Repository</title>
+    <title>${projectName} - BROTHERHOOD Repository</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
+        * { box-sizing: border-box; }
         body { 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             margin: 0; 
-            padding: 20px; 
-            background: #f5f5f5;
-            color: #333;
-        }
-        .container { 
-            max-width: 1200px; 
-            margin: 0 auto; 
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 0; 
+            background: #f6f8fa;
+            color: #24292f;
         }
         .header { 
-            border-bottom: 2px solid #3b82f6; 
-            padding-bottom: 20px; 
-            margin-bottom: 30px;
+            background: white; 
+            border-bottom: 1px solid #d0d7de;
+            padding: 16px 20px;
         }
         .header h1 { 
             margin: 0; 
-            color: #3b82f6;
+            font-size: 20px;
+            font-weight: 600;
+            color: #0969da;
         }
-        .file-item { 
-            margin-bottom: 30px; 
-            border: 1px solid #e5e7eb;
+        .container { 
+            display: flex; 
+            max-width: 1280px; 
+            margin: 20px auto;
+            gap: 20px;
+            min-height: 600px;
+        }
+        .file-tree { 
+            width: 300px; 
+            background: white;
+            border: 1px solid #d0d7de;
+            border-radius: 6px;
+            padding: 16px;
+            height: fit-content;
+        }
+        .tree-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #eaeef2;
+        }
+        .import-mode-btn {
+            background: #0969da;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .import-mode-btn:hover {
+            background: #0860ca;
+        }
+        .download-selected-btn {
+            background: #238636;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .download-selected-btn:disabled {
+            background: #8c959f;
+            cursor: not-allowed;
+        }
+        .cancel-selection-btn {
+            background: #f85149;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+        .tree-controls {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .select-all-btn, .deselect-all-btn {
+            background: #f6f8fa;
+            border: 1px solid #d0d7de;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+            color: #24292f;
+        }
+        .select-all-btn:hover, .deselect-all-btn:hover {
+            background: #f3f4f6;
+        }
+        .file-viewer { 
+            flex: 1; 
+            background: white;
+            border: 1px solid #d0d7de;
             border-radius: 6px;
             overflow: hidden;
         }
-        .file-item h3 { 
-            margin: 0; 
-            padding: 15px 20px; 
-            background: #f9fafb;
-            border-bottom: 1px solid #e5e7eb;
-            font-size: 16px;
-            color: #374151;
+        .tree-item { 
+            padding: 4px 8px; 
+            border-radius: 4px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 6px;
+        }
+        .tree-item:hover { background: #f3f4f6; }
+        .item-content {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            flex: 1;
+        }
+        .item-content.active { 
+            background: #e7f3ff; 
+            border-radius: 4px;
+            padding: 2px 4px;
+        }
+        .item-content.folder { 
+            font-weight: 500; 
+            color: #0969da;
+        }
+        .item-content.folder:hover {
+            color: #0860ca;
+        }
+        .tree-item i { width: 16px; color: #656d76; }
+        .folder-icon { 
+            color: #54aeff !important;
+            transition: color 0.2s ease;
+        }
+        .item-content.folder:hover .folder-icon {
+            color: #0860ca !important;
+        }
+        .file-checkbox, .folder-checkbox {
+            cursor: pointer;
+            margin-left: 8px;
+        }
+        .tree-item.selection-mode {
+            background: #f6f8fa;
+            border: 1px solid #e1e4e8;
+            margin-bottom: 2px;
+        }
+        .tree-item.selection-mode:hover {
+            background: #e1f5fe;
+        }
+        .tree-children { 
+            margin-left: 20px; 
+            border-left: 1px solid #eaeef2;
+            padding-left: 8px;
+        }
+        .file-content { padding: 20px; }
+        .file-path { 
+            background: #f6f8fa; 
+            padding: 10px 16px; 
+            border-bottom: 1px solid #d0d7de;
+            font-family: monospace;
+            font-size: 12px;
+            color: #656d76;
+        }
+        .code-content { 
+            background: #f6f8fa; 
+            border-radius: 6px;
+            overflow-x: auto;
+        }
+        .code-wrapper {
+            display: flex;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 12px;
+            line-height: 1.45;
+        }
+        .line-numbers {
+            background: #f1f3f4;
+            color: #6e7781;
+            padding: 16px 8px 16px 16px;
+            margin: 0;
+            border-right: 1px solid #d0d7de;
+            text-align: right;
+            user-select: none;
+            min-width: 50px;
+        }
+        .line-numbers .line-number {
+            display: block;
+        }
+        .code-lines {
+            background: #f6f8fa;
+            color: #24292f;
+            padding: 16px;
+            margin: 0;
+            flex: 1;
+            white-space: pre-wrap;
+            overflow-x: auto;
+        }
+        .code-lines .code-line {
+            display: block;
         }
         pre { 
             margin: 0; 
-            padding: 20px;
-            background: #1f2937;
-            color: #f9fafb;
-            overflow-x: auto;
-            font-size: 14px;
-            line-height: 1.5;
+            font-family: inherit;
+            font-size: inherit; 
+            line-height: inherit;
         }
-        .meta {
-            margin-top: 20px;
-            padding: 15px;
-            background: #f0f9ff;
-            border: 1px solid #bae6fd;
+        .placeholder { 
+            text-align: center; 
+            color: #656d76; 
+            padding: 40px;
+        }
+        .meta { 
+            margin: 20px auto; 
+            max-width: 1280px; 
+            padding: 16px 20px; 
+            background: white;
+            border: 1px solid #d0d7de;
             border-radius: 6px;
             font-size: 14px;
-            color: #0369a1;
+            color: #656d76;
         }
     </style>
 </head>
 <body>
+    <div class="header">
+        <h1><i class="fas fa-folder"></i> ${projectName}</h1>
+        <p style="margin: 8px 0 0 0; color: #656d76; font-size: 14px;">BROTHERHOOD Repository - 분산 프로젝트 저장소</p>
+    </div>
+    
     <div class="container">
-        <div class="header">
-            <h1>📁 ${projectName}</h1>
-            <p>Baekya Protocol Repository - 분산 프로젝트 저장소</p>
+        <div class="file-tree">
+            <div class="tree-header">
+                <h3 style="margin: 0; font-size: 14px; color: #24292f;">📁 파일 구조</h3>
+                <button class="import-mode-btn" onclick="toggleImportMode()">
+                    <i class="fas fa-download"></i> 가져오기
+                </button>
+            </div>
+            <div class="tree-controls" style="display: none;">
+                <button class="select-all-btn" onclick="selectAll()">전체 선택</button>
+                <button class="deselect-all-btn" onclick="deselectAll()">선택 해제</button>
+                <button class="download-selected-btn" onclick="downloadSelected()" disabled>
+                    <i class="fas fa-download"></i> 다운로드
+                </button>
+                <button class="cancel-selection-btn" onclick="cancelSelection()">취소</button>
+            </div>
+            ${this.renderFileTree(fileTree)}
         </div>
         
-        <div class="files">
-            ${fileList}
-        </div>
-        
-        <div class="meta">
-            <strong>🌐 IPFS 분산 저장소</strong><br>
-            생성일: ${new Date().toLocaleString('ko-KR')}<br>
-            파일 수: ${Object.keys(files).length}개<br>
-            Powered by Baekya Protocol
+        <div class="file-viewer">
+            <div class="file-path" id="filePath">파일을 선택하여 내용을 확인하세요</div>
+            <div class="file-content" id="fileContent">
+                <div class="placeholder">
+                    <i class="fas fa-file-alt" style="font-size: 48px; margin-bottom: 16px; opacity: 0.3;"></i>
+                    <p>왼쪽에서 파일을 클릭하면 내용이 표시됩니다</p>
+                </div>
+            </div>
         </div>
     </div>
+    
+    <div class="meta">
+        <strong>🌐 IPFS 분산 저장소</strong><br>
+        생성일: ${new Date().toLocaleString('ko-KR')} • 
+        파일 수: ${Object.keys(files).length}개 • 
+        Powered by BROTHERHOOD
+    </div>
+
+    <script>
+        ${fileData}
+        
+        function showFile(filePath) {
+            document.querySelectorAll('.tree-item .item-content').forEach(item => item.classList.remove('active'));
+            event.target.closest('.item-content').classList.add('active');
+            
+            document.getElementById('filePath').textContent = filePath;
+            const content = fileContents[filePath] || '파일을 읽을 수 없습니다.';
+            
+            // 줄번호와 함께 표시
+            const lines = content.split('\\n');
+            const lineNumbers = lines.map((line, index) => 
+                '<span class="line-number">' + (index + 1) + '</span>'
+            ).join('\\n');
+            const codeLines = lines.map(line => 
+                '<span class="code-line">' + escapeHtml(line) + '</span>'
+            ).join('\\n');
+            
+            document.getElementById('fileContent').innerHTML = 
+                '<div class="code-content">' +
+                '<div class="code-wrapper">' +
+                '<pre class="line-numbers">' + lineNumbers + '</pre>' +
+                '<pre class="code-lines">' + codeLines + '</pre>' +
+                '</div>' +
+                '</div>';
+        }
+        
+        function toggleFolder(element) {
+            const folderItem = element.closest('.tree-item');
+            const children = folderItem.nextElementSibling;
+            
+            if (children && children.classList.contains('tree-children')) {
+                const icon = element.querySelector('.folder-icon');
+                const isHidden = children.style.display === 'none';
+                
+                if (isHidden) {
+                    children.style.display = 'block';
+                    icon.className = 'fas fa-folder-open folder-icon';
+                } else {
+                    children.style.display = 'none';
+                    icon.className = 'fas fa-folder folder-icon';
+                }
+            }
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // 가져오기 모드 토글
+        function toggleImportMode() {
+            const treeControls = document.querySelector('.tree-controls');
+            const checkboxes = document.querySelectorAll('.file-checkbox, .folder-checkbox');
+            
+            // 선택 컨트롤 표시
+            treeControls.style.display = 'flex';
+            
+            // 체크박스들 표시
+            checkboxes.forEach(checkbox => {
+                checkbox.style.display = 'inline-block';
+            });
+            
+            // 트리 아이템 스타일 조정
+            document.querySelectorAll('.tree-item').forEach(item => {
+                item.classList.add('selection-mode');
+            });
+        }
+        
+        // 선택 취소
+        function cancelSelection() {
+            const treeControls = document.querySelector('.tree-controls');
+            const checkboxes = document.querySelectorAll('.file-checkbox, .folder-checkbox');
+            
+            // 선택 컨트롤 숨김
+            treeControls.style.display = 'none';
+            
+            // 체크박스들 숨김
+            checkboxes.forEach(checkbox => {
+                checkbox.style.display = 'none';
+                checkbox.checked = false;
+            });
+            
+            // 트리 아이템 스타일 복원
+            document.querySelectorAll('.tree-item').forEach(item => {
+                item.classList.remove('selection-mode');
+            });
+        }
+
+        // 파일 선택 상태 업데이트
+        function updateDownloadButton() {
+            const checkedFiles = document.querySelectorAll('.file-checkbox:checked');
+            const downloadBtn = document.querySelector('.download-selected-btn');
+            downloadBtn.disabled = checkedFiles.length === 0;
+        }
+        
+        // 폴더 선택 처리
+        function handleFolderSelection(folderCheckbox) {
+            const folderItem = folderCheckbox.closest('.tree-item');
+            const treeChildren = folderItem.nextElementSibling;
+            
+            if (treeChildren && treeChildren.classList.contains('tree-children')) {
+                // 폴더가 접혀있으면 먼저 펼치기
+                if (treeChildren.style.display === 'none') {
+                    const folderContent = folderItem.querySelector('.item-content.folder');
+                    if (folderContent) {
+                        toggleFolder(folderContent);
+                    }
+                }
+                
+                const childCheckboxes = treeChildren.querySelectorAll('input[type="checkbox"]');
+                childCheckboxes.forEach(checkbox => {
+                    checkbox.checked = folderCheckbox.checked;
+                });
+            }
+            updateDownloadButton();
+        }
+        
+        // 전체 선택
+        function selectAll() {
+            document.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+                checkbox.checked = true;
+            });
+            updateDownloadButton();
+        }
+        
+        // 선택 해제
+        function deselectAll() {
+            document.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+                checkbox.checked = false;
+            });
+            updateDownloadButton();
+        }
+        
+        // 선택된 파일들 다운로드
+        async function downloadSelected() {
+            const checkedCheckboxes = document.querySelectorAll('input[type="checkbox"]:checked');
+            const selectedPaths = Array.from(checkedCheckboxes).map(cb => cb.dataset.path);
+            
+            if (selectedPaths.length === 0) {
+                alert('다운로드할 파일을 선택해주세요.');
+                return;
+            }
+            
+            try {
+                // 선택된 파일들만 필터링 (폴더 경로 제외)
+                const selectedFiles = {};
+                selectedPaths.forEach(path => {
+                    if (fileContents[path]) {
+                        selectedFiles[path] = fileContents[path];
+                    }
+                });
+                
+                // 폴더가 선택된 경우 하위 파일들도 포함
+                const allFilePaths = Object.keys(fileContents);
+                selectedPaths.forEach(selectedPath => {
+                    if (!fileContents[selectedPath]) {
+                        // 폴더인 경우 하위 파일들 찾기
+                        allFilePaths.forEach(filePath => {
+                            if (filePath.startsWith(selectedPath + '/')) {
+                                selectedFiles[filePath] = fileContents[filePath];
+                            }
+                        });
+                    }
+                });
+                
+                // JSZip 라이브러리 로드
+                if (typeof JSZip === 'undefined') {
+                    await loadJSZip();
+                }
+                
+                const zip = new JSZip();
+                
+                // 선택된 파일들을 ZIP에 추가
+                Object.keys(selectedFiles).forEach(filePath => {
+                    zip.file(filePath, selectedFiles[filePath]);
+                });
+                
+                // ZIP 파일 생성 및 다운로드
+                const content = await zip.generateAsync({ type: 'blob' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(content);
+                link.download = 'selected-files.zip';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(link.href);
+                
+                // 다운로드 완료 후 선택 모드 해제
+                cancelSelection();
+                
+            } catch (error) {
+                console.error('다운로드 실패:', error);
+                alert('다운로드에 실패했습니다: ' + error.message);
+            }
+        }
+        
+        // JSZip 라이브러리 로드
+        function loadJSZip() {
+            return new Promise((resolve, reject) => {
+                if (typeof JSZip !== 'undefined') {
+                    resolve();
+                    return;
+                }
+                
+                const script = document.createElement('script');
+                script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+                script.onload = resolve;
+                script.onerror = () => reject(new Error('JSZip 라이브러리를 로드할 수 없습니다.'));
+                document.head.appendChild(script);
+            });
+        }
+    </script>
 </body>
 </html>
     `;
+  }
+
+  // 파일 구조를 트리로 변환
+  buildFileTree(files) {
+    const tree = {};
+    
+    Object.keys(files).forEach(filePath => {
+      const parts = filePath.split('/');
+      let current = tree;
+      
+      parts.forEach((part, index) => {
+        if (!current[part]) {
+          current[part] = index === parts.length - 1 ? { _isFile: true } : {};
+        }
+        current = current[part];
+      });
+    });
+    
+    return tree;
+  }
+
+  // 파일 트리 HTML 렌더링
+  renderFileTree(tree, path = '') {
+    return Object.keys(tree).map(key => {
+      const fullPath = path ? `${path}/${key}` : key;
+      const isFile = tree[key]._isFile;
+      
+      if (isFile) {
+        const icon = this.getFileIcon(key);
+        return `<div class="tree-item file-item" data-path="${fullPath}">
+          <div class="item-content" onclick="showFile('${fullPath}')">
+            <i class="fas ${icon}"></i>
+            ${key}
+          </div>
+          <input type="checkbox" class="file-checkbox" data-path="${fullPath}" onchange="updateDownloadButton()" style="display: none;">
+        </div>`;
+      } else {
+        const children = this.renderFileTree(tree[key], fullPath);
+        return `
+          <div class="tree-item folder-item" data-path="${fullPath}">
+            <div class="item-content folder" onclick="toggleFolder(this)">
+              <i class="fas fa-folder folder-icon"></i>
+              ${key}
+            </div>
+            <input type="checkbox" class="folder-checkbox" data-path="${fullPath}" onchange="handleFolderSelection(this)" style="display: none;">
+          </div>
+          <div class="tree-children" style="display: none;">
+            ${children}
+          </div>
+        `;
+      }
+    }).join('');
+  }
+
+  // 파일 데이터를 JavaScript로 변환
+  generateFileDataScript(files) {
+    const escapedFiles = {};
+    Object.keys(files).forEach(path => {
+      // JSON.stringify로 이스케이프 처리
+      escapedFiles[path] = files[path];
+    });
+    
+    return `const fileContents = ${JSON.stringify(escapedFiles, null, 2)};`;
   }
 
   // HTML 이스케이프
@@ -31970,6 +32495,138 @@ module.exports = sampleFunction;`
       alert('레포지토리 URL이 없습니다.');
     }
   }
+
+  // 레포지토리 다운로드
+  async downloadRepository(repositoryId) {
+    try {
+      const repo = this.repositories.find(r => r.id === repositoryId);
+      if (!repo) {
+        alert('레포지토리를 찾을 수 없습니다.');
+        return;
+      }
+
+      // IPFS에서 파일 데이터 가져오기
+      this.showDownloadStatus('다운로드 중...', 'loading');
+      
+      const response = await fetch(repo.ipfsUrl);
+      if (!response.ok) {
+        throw new Error('IPFS에서 데이터를 가져올 수 없습니다.');
+      }
+
+      const htmlContent = await response.text();
+      
+      // HTML에서 파일 데이터 추출
+      const fileData = this.extractFileDataFromHTML(htmlContent);
+      
+      if (!fileData || Object.keys(fileData).length === 0) {
+        throw new Error('파일 데이터를 추출할 수 없습니다.');
+      }
+
+      // ZIP 파일로 다운로드
+      await this.createAndDownloadZip(fileData, repo.name);
+      
+      this.showDownloadStatus('다운로드 완료!', 'success');
+      setTimeout(() => this.hideDownloadStatus(), 3000);
+
+    } catch (error) {
+      console.error('다운로드 실패:', error);
+      this.showDownloadStatus('다운로드 실패: ' + error.message, 'error');
+      setTimeout(() => this.hideDownloadStatus(), 5000);
+    }
+  }
+
+  // HTML에서 파일 데이터 추출
+  extractFileDataFromHTML(htmlContent) {
+    try {
+      // fileContents 객체를 찾아서 추출
+      const match = htmlContent.match(/const fileContents = ({[\s\S]*?});/);
+      if (!match) {
+        throw new Error('파일 데이터를 찾을 수 없습니다.');
+      }
+      
+      return JSON.parse(match[1]);
+    } catch (error) {
+      console.error('파일 데이터 추출 실패:', error);
+      return null;
+    }
+  }
+
+  // ZIP 파일 생성 및 다운로드
+  async createAndDownloadZip(fileData, repositoryName) {
+    // JSZip 라이브러리가 없으면 동적으로 로드
+    if (typeof JSZip === 'undefined') {
+      await this.loadJSZip();
+    }
+
+    const zip = new JSZip();
+
+    // 파일들을 ZIP에 추가
+    Object.keys(fileData).forEach(filePath => {
+      zip.file(filePath, fileData[filePath]);
+    });
+
+    // ZIP 파일 생성
+    const content = await zip.generateAsync({ type: 'blob' });
+
+    // 다운로드 트리거
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(content);
+    link.download = `${repositoryName}.zip`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    // 메모리 정리
+    URL.revokeObjectURL(link.href);
+  }
+
+  // JSZip 라이브러리 동적 로드
+  loadJSZip() {
+    return new Promise((resolve, reject) => {
+      if (typeof JSZip !== 'undefined') {
+        resolve();
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+      script.onload = resolve;
+      script.onerror = () => reject(new Error('JSZip 라이브러리를 로드할 수 없습니다.'));
+      document.head.appendChild(script);
+    });
+  }
+
+  // 다운로드 상태 표시
+  showDownloadStatus(message, type) {
+    // 기존 상태창이 있으면 제거
+    this.hideDownloadStatus();
+
+    const statusDiv = document.createElement('div');
+    statusDiv.id = 'downloadStatus';
+    statusDiv.className = `download-status ${type}`;
+    
+    const icon = type === 'loading' ? 'fa-spinner fa-spin' : 
+                 type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle';
+    
+    statusDiv.innerHTML = `
+      <i class="fas ${icon}"></i>
+      <span>${message}</span>
+    `;
+
+    document.body.appendChild(statusDiv);
+
+    // 애니메이션으로 표시
+    setTimeout(() => statusDiv.classList.add('show'), 100);
+  }
+
+  // 다운로드 상태 숨기기
+  hideDownloadStatus() {
+    const statusDiv = document.getElementById('downloadStatus');
+    if (statusDiv) {
+      statusDiv.classList.remove('show');
+      setTimeout(() => statusDiv.remove(), 300);
+    }
+  }
 }
 
 // BrotherhoodDApp 클래스에 거버넌스 관리자 추가
@@ -32014,12 +32671,20 @@ if (typeof window !== 'undefined') {
         this.governanceManager.removeSelectedFile(index);
       };
 
+      window.dapp.clearSelectedFiles = function() {
+        this.governanceManager.clearSelectedFiles();
+      };
+
       window.dapp.createRepository = function() {
         this.governanceManager.createRepository();
       };
 
       window.dapp.viewRepository = function(repositoryId) {
         this.governanceManager.viewRepository(repositoryId);
+      };
+
+      window.dapp.downloadRepository = function(repositoryId) {
+        this.governanceManager.downloadRepository(repositoryId);
       };
 
       // IPFS 설정 관련 함수들 추가

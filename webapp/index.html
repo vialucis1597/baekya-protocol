@@ -535,10 +535,6 @@
                     <i class="fas fa-check-circle"></i>
                     <span>III. 반영</span>
                 </button>
-                <button class="governance-tab" data-tab="system" onclick="window.dapp.switchGovernanceTab('system')">
-                    <i class="fas fa-code"></i>
-                    <span>시스템</span>
-                </button>
                 <button class="governance-tab" data-tab="repository" onclick="window.dapp.switchGovernanceTab('repository')">
                     <i class="fas fa-folder-open"></i>
                     <span>레포지토리</span>
@@ -606,47 +602,6 @@
                 <div class="completed-content">
                     <h3>완료된 제안</h3>
                     <p>성공적으로 완료된 제안들입니다.</p>
-                </div>
-            </div>
-
-            <!-- 시스템 탭 콘텐츠 -->
-            <div id="governance-system" class="governance-tab-content">
-                <div class="system-container">
-                    <div class="system-header">
-                        <h2><i class="fas fa-code"></i> 시스템 구조</h2>
-                        <div class="system-actions">
-                            <button class="btn-primary download-btn" onclick="window.dapp.toggleDownloadMode()">
-                                <i class="fas fa-download"></i> 가져오기
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- 파일 트리 -->
-                    <div class="file-tree-container">
-                        <div class="select-all-controls">
-                            <button class="select-all-btn" onclick="window.dapp.selectAllFiles()">전체 선택</button>
-                            <button class="select-all-btn" onclick="window.dapp.deselectAllFiles()">전체 해제</button>
-                            <button class="btn-primary" onclick="window.dapp.downloadSelectedFiles()">
-                                <i class="fas fa-download"></i> 다운로드
-                            </button>
-                        </div>
-                        <div class="file-tree" id="fileTree">
-                            <!-- 파일 트리가 동적으로 생성됩니다 -->
-                        </div>
-                    </div>
-
-                    <!-- 파일 뷰어 -->
-                    <div class="file-viewer" id="fileViewer" style="display: none;">
-                        <div class="file-viewer-header">
-                            <div class="file-path" id="filePath"></div>
-                            <button class="close-viewer-btn" onclick="window.dapp.closeFileViewer()">
-                                <i class="fas fa-times"></i>
-                            </button>
-                        </div>
-                        <div class="file-content" id="fileContent">
-                            <!-- 파일 내용이 표시됩니다 -->
-                        </div>
-                    </div>
                 </div>
             </div>
 
@@ -976,17 +931,26 @@
                     </div>
                     
                     <div class="form-group">
-                        <label>파일 업로드</label>
-                        <div class="upload-area" onclick="document.getElementById('fileInput').click()" 
-                             ondragover="window.dapp.handleDragOver(event)" 
-                             ondrop="window.dapp.handleDrop(event)">
+                        <label>파일/폴더 업로드</label>
+                        <div class="upload-methods">
+                            <button type="button" class="upload-method-btn" onclick="document.getElementById('fileInput').click()">
+                                <i class="fas fa-file"></i>
+                                개별 파일 선택
+                            </button>
+                            <button type="button" class="upload-method-btn" onclick="document.getElementById('folderInput').click()">
+                                <i class="fas fa-folder"></i>
+                                폴더 선택
+                            </button>
+                        </div>
+                        <div class="upload-area" ondragover="window.dapp.handleDragOver(event)" ondrop="window.dapp.handleDrop(event)">
                             <div class="upload-content">
                                 <i class="fas fa-cloud-upload-alt"></i>
-                                <p>파일을 드래그하여 놓거나 클릭하여 선택하세요</p>
-                                <small>여러 파일을 선택할 수 있습니다</small>
+                                <p>파일이나 폴더를 드래그하여 놓거나 위 버튼으로 선택하세요</p>
+                                <small>폴더 구조가 유지됩니다</small>
                             </div>
                         </div>
                         <input type="file" id="fileInput" multiple style="display: none;" onchange="window.dapp.handleFileSelection(this)">
+                        <input type="file" id="folderInput" webkitdirectory style="display: none;" onchange="window.dapp.handleFileSelection(this)">
                     </div>
                     
                     <div id="selectedFiles" class="selected-files">
