@@ -31406,15 +31406,26 @@ module.exports = sampleFunction;`
     return userProposals;
   }
 
-  // 레포지토리 관련 메서드들
+  // 레포지토리 관련 메서드들 (로컬 전용)
   async loadRepositories() {
     try {
-      // 로컬 스토리지에서 레포지토리 데이터 로드
-      const repositories = JSON.parse(localStorage.getItem('repositories') || '[]');
-      this.repositories = repositories;
+      console.log('🔄 로컬 레포지토리 로딩 시작...');
+      
+      // 로컬 데이터만 로드
+      const localRepositories = JSON.parse(localStorage.getItem('repositories') || '[]');
+      console.log('💾 로컬에서 로드된 레포지토리:', localRepositories.length, '개');
+      
+      // 최신 순으로 정렬
+      localRepositories.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      
+      this.repositories = localRepositories;
+      console.log('📋 최종 레포지토리 목록:', this.repositories.length, '개');
+      
       this.renderRepositories();
+      console.log('🎨 레포지토리 렌더링 완료');
+      
     } catch (error) {
-      console.error('레포지토리 로드 실패:', error);
+      console.error('❌ 레포지토리 로드 실패:', error);
       this.repositories = [];
       this.renderRepositories();
     }
@@ -31645,15 +31656,20 @@ module.exports = sampleFunction;`
         }))
       };
 
-      // 로컬 스토리지에 저장
-      this.repositories = this.repositories || [];
-      this.repositories.push(repository);
-      localStorage.setItem('repositories', JSON.stringify(this.repositories));
+       // 로컬 스토리지에 저장
+       this.repositories = this.repositories || [];
+       this.repositories.push(repository);
+       localStorage.setItem('repositories', JSON.stringify(this.repositories));
+       
+       // 블록체인에는 URL만 저장 (백그라운드로 처리)
+       this.createRepositoryUrlTransaction(repository).catch(error => {
+         console.warn('⚠️ 레포지토리 URL 블록체인 저장 실패:', error.message);
+       });
 
-      // UI 업데이트
-      this.renderRepositories();
-      this.closeUploadModal();
-      this.showDeploymentStatus('success', ipfsUrl);
+       // UI 업데이트
+       this.renderRepositories();
+       this.closeUploadModal();
+       this.showDeploymentStatus('success', ipfsUrl);
 
       console.log('레포지토리 생성 완료:', repository);
 
@@ -31662,6 +31678,41 @@ module.exports = sampleFunction;`
       this.showDeploymentStatus('error', null, error.message);
     }
   }
+
+  // 레포지토리 URL만 블록체인에 저장 (간소화된 버전)
+  async createRepositoryUrlTransaction(repository) {
+    try {
+      console.log('📤 레포지토리 URL 블록체인 저장:', repository.name);
+      
+      // 로컬 서버에 URL만 저장하는 간단한 트랜잭션
+      const response = await fetch(`http://localhost:3000/api/repository-url`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          repositoryId: repository.id,
+          name: repository.name,
+          ipfsUrl: repository.ipfsUrl,
+          ipfsHash: repository.ipfsHash,
+          authorDID: window.dapp.currentUser?.did || 'anonymous',
+          createdAt: repository.createdAt
+        })
+      });
+
+      if (response.ok) {
+        console.log('✅ 레포지토리 URL 블록체인 저장 완료');
+      } else {
+        throw new Error(`URL 저장 실패: ${response.status}`);
+      }
+
+    } catch (error) {
+      console.error('❌ 레포지토리 URL 블록체인 저장 실패:', error);
+      throw error;
+    }
+  }
+
+
 
   // 시스템 파일들 가져오기
   async getSystemFiles() {

@@ -24,6 +24,7 @@ const { spawn } = require('child_process');
 
 // 백야 프로토콜 컴포넌트들
 const Protocol = require('./src/index.js');
+const Transaction = require('./src/blockchain/Transaction.js');
 
 const app = express();
 let port = process.env.PORT || 3000; // Railway 환경변수 사용 (포트 폴백을 위해 let으로 변경)
@@ -590,7 +591,7 @@ wss.on('connection', (ws) => {
   
   console.log('🔌 새로운 WebSocket 연결 시도');
   
-  ws.on('message', (message) => {
+  ws.on('message', async (message) => {
     try {
       const data = JSON.parse(message);
       console.log('📨 WebSocket 메시지 수신:', data.type, data.did ? `DID: ${data.did.substring(0, 16)}...` : '');
@@ -683,6 +684,8 @@ wss.on('connection', (ws) => {
         case 'ping':
           ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
           break;
+
+
           
         default:
           console.log(`❓ 알 수 없는 메시지 타입: ${data.type}`);
@@ -3323,6 +3326,242 @@ app.get('/api/invite-code', async (req, res) => {
       success: false, 
       error: '초대코드 조회 실패', 
       details: error.message 
+    });
+  }
+});
+
+// 레포지토리 URL만 저장 (간소화된 버전)
+app.post('/api/repository-url', async (req, res) => {
+  try {
+    const repositoryData = req.body;
+    console.log('📥 레포지토리 URL 저장 요청:', repositoryData.name);
+    
+    if (!repositoryData || !repositoryData.repositoryId) {
+      return res.status(400).json({
+        success: false,
+        error: '레포지토리 ID가 필요합니다'
+      });
+    }
+    
+    // 간단한 URL 트랜잭션 생성
+    const transactionId = 'repo_url_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    
+    const transaction = new Transaction(
+      repositoryData.authorDID || 'anonymous',
+      'did:baekya:system000000000000000000000000000000000',
+      0,
+      'B-Token',
+      {
+        type: 'REPOSITORY_URL',
+        repositoryId: repositoryData.repositoryId,
+        name: repositoryData.name,
+        ipfsUrl: repositoryData.ipfsUrl,
+        ipfsHash: repositoryData.ipfsHash,
+        authorDID: repositoryData.authorDID,
+        createdAt: repositoryData.createdAt
+      }
+    );
+    
+    // 트랜잭션 서명
+    transaction.sign('test-key');
+    
+    // 블록체인에 트랜잭션 추가
+    if (!protocol || !protocol.components || !protocol.components.blockchain) {
+      throw new Error('Blockchain 컴포넌트가 초기화되지 않았습니다');
+    }
+    
+    const result = protocol.components.blockchain.addTransaction(transaction);
+    
+    if (result.success) {
+      console.log('✅ 레포지토리 URL 블록체인 추가 완료:', transactionId);
+      
+      res.json({
+        success: true,
+        transactionId: transactionId,
+        repositoryId: repositoryData.repositoryId,
+        message: '레포지토리 URL이 블록체인에 추가되었습니다'
+      });
+      
+    } else {
+      throw new Error('블록체인에 트랜잭션 추가 실패: ' + result.error);
+    }
+    
+  } catch (error) {
+    console.error('❌ 레포지토리 URL 저장 실패:', error);
+    res.status(500).json({
+      success: false,
+      error: '서버 오류가 발생했습니다'
+    });
+  }
+});
+
+// 레포지토리 트랜잭션 생성 (레거시 - 사용 안함)
+app.post('/api/repository-transaction', async (req, res) => {
+  try {
+    let repositoryData;
+    
+    // 터널 요청인 경우 헤더에서 body 데이터 추출
+    if (req.headers['x-tunnel-request'] === 'true') {
+      const tunnelBody = req.headers['x-tunnel-body'];
+      
+      if (tunnelBody) {
+        try {
+          // base64 디코딩 후 JSON 파싱
+          const decodedBody = Buffer.from(tunnelBody, 'base64').toString('utf8');
+          repositoryData = JSON.parse(decodedBody);
+        } catch (parseError) {
+          console.error('❌ 터널 body 파싱 실패:', parseError);
+          return res.status(400).json({
+            success: false,
+            error: '요청 데이터 파싱 실패'
+          });
+        }
+      } else {
+        console.error('❌ 터널 body가 없습니다');
+        return res.status(400).json({
+          success: false,
+          error: '요청 데이터가 없습니다'
+        });
+      }
+    } else {
+      // 일반 요청
+      repositoryData = req.body;
+    }
+    
+    console.log('📥 레포지토리 트랜잭션 요청:', repositoryData);
+    
+    if (!repositoryData || !repositoryData.repositoryId) {
+      return res.status(400).json({
+        success: false,
+        error: '레포지토리 ID가 필요합니다'
+      });
+    }
+    
+    // 트랜잭션 생성
+    const transactionId = 'repo_tx_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    
+    const transaction = new Transaction(
+      repositoryData.authorDID || 'anonymous',
+      'did:baekya:system000000000000000000000000000000000',
+      0,
+      'B-Token',
+      {
+        type: 'REPOSITORY_TRANSACTION',
+        repositoryId: repositoryData.repositoryId,
+        name: repositoryData.name,
+        description: repositoryData.description,
+        ipfsUrl: repositoryData.ipfsUrl,
+        ipfsHash: repositoryData.ipfsHash,
+        fileCount: repositoryData.fileCount,
+        createdAt: repositoryData.createdAt,
+        authorDID: repositoryData.authorDID
+      }
+    );
+    
+    // 트랜잭션 서명 (개발 환경용 테스트 키 사용)
+    transaction.sign('test-key');
+    
+    // 블록체인에 트랜잭션 추가
+    console.log('🔍 Protocol 상태 확인:', {
+      protocol: !!protocol,
+      components: !!protocol?.components,
+      blockchain: !!protocol?.components?.blockchain,
+      componentKeys: protocol?.components ? Object.keys(protocol.components) : 'No components'
+    });
+    
+    if (!protocol) {
+      throw new Error('Protocol이 초기화되지 않았습니다');
+    }
+    
+    if (!protocol.components || !protocol.components.blockchain) {
+      throw new Error('Blockchain 컴포넌트가 초기화되지 않았습니다');
+    }
+    
+    const result = protocol.components.blockchain.addTransaction(transaction);
+    
+    if (result.success) {
+      console.log('✅ 레포지토리 트랜잭션 블록체인 추가 완료:', transactionId);
+      
+      res.json({
+        success: true,
+        transactionId: transactionId,
+        repositoryId: repositoryData.repositoryId,
+        message: '레포지토리 트랜잭션이 블록체인에 추가되었습니다'
+      });
+    } else {
+      console.error('❌ 레포지토리 트랜잭션 블록체인 추가 실패:', result.error);
+      res.status(500).json({
+        success: false,
+        error: result.error || '트랜잭션 추가 실패'
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ 레포지토리 트랜잭션 처리 오류:', error);
+    res.status(500).json({
+      success: false,
+      error: '서버 오류가 발생했습니다'
+    });
+  }
+});
+
+// 레포지토리 목록 조회 (블록체인에서)
+app.get('/api/repositories', async (req, res) => {
+  try {
+    const { authorDID } = req.query;
+    console.log('📥 레포지토리 조회 요청:', { authorDID });
+    
+    if (!authorDID) {
+      return res.status(400).json({
+        success: false,
+        error: 'authorDID 파라미터가 필요합니다'
+      });
+    }
+
+    const repositories = [];
+    
+    console.log('🔍 레포지토리 조회 - Protocol 상태:', {
+      protocol: !!protocol,
+      components: !!protocol?.components,
+      blockchain: !!protocol?.components?.blockchain,
+      componentKeys: protocol?.components ? Object.keys(protocol.components) : 'No components'
+    });
+    
+    if (protocol && protocol.components && protocol.components.blockchain) {
+      // 블록체인에서 레포지토리 트랜잭션 검색
+      const allTransactions = protocol.components.blockchain.getAllTransactions();
+      
+      for (const tx of allTransactions) {
+        if (tx.data && 
+            tx.data.type === 'REPOSITORY_TRANSACTION' && 
+            tx.data.authorDID === authorDID) {
+          repositories.push({
+            id: tx.data.repositoryId,
+            name: tx.data.name,
+            description: tx.data.description,
+            ipfsUrl: tx.data.ipfsUrl,
+            ipfsHash: tx.data.ipfsHash,
+            fileCount: tx.data.fileCount,
+            createdAt: tx.data.createdAt,
+            authorDID: tx.data.authorDID
+          });
+        }
+      }
+      
+      console.log(`✅ 레포지토리 조회 완료: ${repositories.length}개 발견`);
+    }
+    
+    res.json({
+      success: true,
+      repositories: repositories
+    });
+    
+  } catch (error) {
+    console.error('❌ 레포지토리 조회 실패:', error);
+    res.status(500).json({
+      success: false,
+      error: '서버 오류가 발생했습니다',
+      repositories: []
     });
   }
 });
@@ -6534,6 +6773,48 @@ function checkForCollaborationTransition() {
   } catch (error) {
     console.error('투표 단계 전환 체크 중 오류:', error);
     return { hasUpdate: false, error: error.message };
+  }
+}
+
+// 명령줄 인수 확인
+const args = process.argv.slice(2);
+const isCleanStart = args.includes('--clean') || args.includes('-c');
+const showHelp = args.includes('--help') || args.includes('-h');
+
+// 도움말 표시
+if (showHelp) {
+  console.log(`
+⚔️  BROTHERHOOD VALIDATOR 사용법
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 기본 실행:
+   node server.js
+
+🗑️  깨끗한 시작 (기존 데이터 삭제):
+   node server.js --clean
+   node server.js -c
+
+❓ 도움말:
+   node server.js --help
+   node server.js -h
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`);
+  process.exit(0);
+}
+
+// 깨끗한 시작 옵션이 있으면 데이터 폴더 삭제
+if (isCleanStart) {
+  const fs = require('fs');
+  const path = require('path');
+  const dataDir = './baekya_data';
+  
+  if (fs.existsSync(dataDir)) {
+    console.log('🗑️  --clean 옵션 감지: 기존 데이터 삭제 중...');
+    fs.rmSync(dataDir, { recursive: true, force: true });
+    console.log('✅ 기존 데이터 삭제 완료');
+  } else {
+    console.log('📁 데이터 폴더가 존재하지 않음 - 새로 시작');
   }
 }
 

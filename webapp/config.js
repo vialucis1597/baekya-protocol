@@ -4,17 +4,19 @@
 // Capacitor 환경 감지
 const isCapacitor = window.Capacitor && window.Capacitor.isNativePlatform();
 
-if (isCapacitor) {
-  // 모바일 앱 - PC의 IP 주소로 접근
-  window.RELAY_SERVER_URL = 'http://192.168.219.103:3000';
-  console.log('📱 모바일 앱 - PC 서버 접근:', window.RELAY_SERVER_URL);
-} else {
-  // 웹 브라우저 - localhost 사용
-  window.RELAY_SERVER_URL = 'http://localhost:3000';
-  console.log('🌐 웹 브라우저 - 로컬 서버 사용:', window.RELAY_SERVER_URL);
-}
+// DAppManager에서 최적 릴레이 선택하도록 설정
+window.USE_RELAY_NODES = true;
 
-window.USE_RELAY_NODES = false;
+// 개발/테스트 모드에서만 로컬 서버 사용
+if (window.location.hostname === 'localhost' && window.location.port === '8000') {
+  // 웹앱 개발 모드에서는 로컬 서버 사용
+  window.RELAY_SERVER_URL = 'http://localhost:3000';
+  window.USE_RELAY_NODES = false;
+  console.log('🛠️ 개발 모드 - 로컬 서버 사용:', window.RELAY_SERVER_URL);
+} else {
+  // 실제 운영에서는 릴레이 노드 자동 선택
+  console.log('🌐 릴레이 노드 자동 선택 모드');
+}
 
 // 기타 설정
 window.APP_CONFIG = {

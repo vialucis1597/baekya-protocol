@@ -1299,6 +1299,23 @@ class BlockchainCore {
     const toBalance = this.getBalance(transaction.toAddress, transaction.tokenType);
     this.setBalance(transaction.toAddress, transaction.tokenType, toBalance + transaction.amount);
   }
+
+  // 모든 트랜잭션 조회 (레포지토리용)
+  getAllTransactions() {
+    const allTransactions = [];
+    
+    // 체인의 모든 블록에서 트랜잭션 수집
+    for (const block of this.chain) {
+      if (block.transactions && Array.isArray(block.transactions)) {
+        allTransactions.push(...block.transactions);
+      }
+    }
+    
+    // 대기 중인 트랜잭션도 포함
+    allTransactions.push(...this.pendingTransactions);
+    
+    return allTransactions;
+  }
 }
 
 module.exports = BlockchainCore; 

@@ -58,6 +58,13 @@ class DAO {
 
 
 
+    // Development DAO
+    const developmentDAO = this.createDAO(systemDID, {
+      name: 'Development DAO', 
+      purpose: 'Development Management',
+      description: '백야 프로토콜 개발을 담당하는 DAO'
+    });
+
     // Community DAO
     const communityDAO = this.createDAO(systemDID, {
       name: 'Community DAO', 

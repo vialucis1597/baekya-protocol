@@ -287,6 +287,94 @@ app.get('/api/ping', (req, res) => {
   });
 });
 
+
+
+// 레포지토리 트랜잭션 생성 API (HTTP → WebSocket 터널 방식)
+app.post('/api/repository-transaction', async (req, res) => {
+  try {
+    console.log('📥 레포지토리 트랜잭션 요청 수신:', req.body);
+    
+    if (!connectedValidator) {
+      return res.status(503).json({
+        success: false,
+        error: '연결된 검증자 노드가 없습니다'
+      });
+    }
+
+    const repositoryData = req.body;
+    
+    // 풀노드로 레포지토리 트랜잭션 전달 (기존 터널 방식)
+    const result = await forwardToValidator(connectedValidator, {
+      method: 'POST',
+      path: '/repository-transaction',
+      headers: req.headers,
+      body: repositoryData,
+      query: {}
+    });
+    
+    console.log('✅ 레포지토리 트랜잭션 처리 결과:', result);
+    res.json({
+      success: true,
+      transactionId: repositoryData.repositoryId,
+      result: result
+    });
+    
+  } catch (error) {
+    console.error('❌ 레포지토리 트랜잭션 처리 실패:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// 레포지토리 목록 조회 API (HTTP → WebSocket 터널 방식)
+app.get('/api/repositories', async (req, res) => {
+  try {
+    const { authorDID } = req.query;
+    console.log('📥 레포지토리 조회 요청:', { authorDID });
+    
+    if (!connectedValidator) {
+      return res.status(503).json({
+        success: false,
+        error: '연결된 검증자 노드가 없습니다'
+      });
+    }
+
+    if (!authorDID) {
+      return res.status(400).json({
+        success: false,
+        error: 'authorDID 파라미터가 필요합니다'
+      });
+    }
+
+    // 풀노드에서 레포지토리 데이터 조회 (기존 터널 방식)
+    const result = await forwardToValidator(connectedValidator, {
+      method: 'GET',
+      path: '/repositories',
+      headers: req.headers,
+      body: {},
+      query: { authorDID }
+    });
+    
+    console.log('✅ 레포지토리 조회 결과:', result);
+    res.json({
+      success: true,
+      repositories: result?.repositories || []
+    });
+    
+  } catch (error) {
+    console.error('❌ 레포지토리 조회 실패:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      repositories: []
+    });
+  }
+});
+
+
+
 // 검증자로 요청 전달하는 함수
 async function forwardToValidator(validator, requestData) {
   try {

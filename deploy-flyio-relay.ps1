@@ -93,9 +93,6 @@ try {
     Write-Host "Preparing deployment configuration..." -ForegroundColor Yellow
     
     # Backup original files
-    if (Test-Path "fly.toml") {
-        Copy-Item "fly.toml" "fly.toml.backup"
-    }
     if (Test-Path "Dockerfile") {
         Copy-Item "Dockerfile" "Dockerfile.backup"
     }
@@ -106,14 +103,15 @@ try {
         Copy-Item ".dockerignore" ".dockerignore.backup"
     }
     
-    # Use Fly.io specific files
-    Copy-Item "fly-relay.toml" "fly.toml"
+    # Use Fly.io specific files (but keep fly-relay.toml as is)
     Copy-Item "Dockerfile.flyio.relay" "Dockerfile"
     Copy-Item "railway-relay.json" "package.json"
-    Copy-Item ".dockerignore.relay" ".dockerignore"
+    if (Test-Path ".dockerignore.relay") {
+        Copy-Item ".dockerignore.relay" ".dockerignore"
+    }
     
-    # Update app name in fly.toml
-    (Get-Content "fly.toml") -replace 'app = "baekya-relay-server"', "app = `"$AppName`"" | Set-Content "fly.toml"
+    # Update app name in fly-relay.toml directly
+    (Get-Content "fly-relay.toml") -replace 'app = "[^"]*"', "app = `"$AppName`"" | Set-Content "fly-relay.toml"
     
     # Set secrets/environment variables
     Write-Host "Setting environment variables..." -ForegroundColor Yellow
@@ -123,7 +121,7 @@ try {
     
     # Deploy to Fly.io
     Write-Host "Deploying to Fly.io..." -ForegroundColor Yellow
-    fly deploy --app $AppName
+    fly deploy --app $AppName --config fly-relay.toml
     
     if ($LASTEXITCODE -ne 0) {
         throw "Deployment failed"
@@ -147,12 +145,6 @@ try {
     
     # Restore original files
     Write-Host "Restoring original configuration files..." -ForegroundColor Yellow
-    
-    if (Test-Path "fly.toml.backup") {
-        Move-Item "fly.toml.backup" "fly.toml" -Force
-    } else {
-        Remove-Item "fly.toml" -Force -ErrorAction SilentlyContinue
-    }
     
     if (Test-Path "Dockerfile.backup") {
         Move-Item "Dockerfile.backup" "Dockerfile" -Force
@@ -190,12 +182,6 @@ try {
     
     # Restore files on error
     Write-Host "Restoring original files due to error..." -ForegroundColor Yellow
-    
-    if (Test-Path "fly.toml.backup") {
-        Move-Item "fly.toml.backup" "fly.toml" -Force
-    } else {
-        Remove-Item "fly.toml" -Force -ErrorAction SilentlyContinue
-    }
     
     if (Test-Path "Dockerfile.backup") {
         Move-Item "Dockerfile.backup" "Dockerfile" -Force

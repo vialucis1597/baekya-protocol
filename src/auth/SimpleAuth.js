@@ -308,15 +308,12 @@ class SimpleAuth {
    * @private
    */
   createDIDHash(username, password) {
-    const timestamp = Date.now();
-    const entropy = crypto.randomBytes(32).toString('hex');
-    
+    // Deterministic DID 생성 - 같은 username/password는 항상 같은 DID
     const combinedData = {
       username,
       passwordHash: crypto.createHash('sha256').update(password).digest('hex'),
-      timestamp,
-      entropy,
-      version: '2.0_simple'
+      version: '2.0_simple',
+      salt: 'baekya-protocol-did-salt' // 고정 salt로 deterministic 보장
     };
 
     return crypto.createHash('sha512')
