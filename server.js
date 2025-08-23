@@ -86,6 +86,10 @@ async function createWebSocketTunnel(relayUrl, password) {
         } else if (message.type === 'http_request') {
           // HTTP 요청을 로컬 서버로 프록시
           handleTunnelRequest(message);
+        } else if (message.type === 'new_block_received') {
+          // 중계서버에서 전파된 블록 수신
+          console.log(`📦 중계서버에서 블록 #${message.block?.index} 수신`);
+          handleRelayMessage(message);
         }
       } catch (error) {
         console.error('❌ 터널 메시지 파싱 오류:', error);
@@ -811,6 +815,12 @@ async function initializeServer() {
   if (!initialized) {
       throw new Error('프로토콜 초기화 실패');
   }
+  
+  // BlockchainCore에 인증 시스템 연결
+  if (protocol.components && protocol.components.blockchain && protocol.components.authSystem) {
+    protocol.components.blockchain.setAuthSystem(protocol.components.authSystem);
+    console.log('🔗 BlockchainCore에 인증 시스템이 연결되었습니다.');
+  }
     
     // 자동검증 시스템 초기화
     console.log('🤖 자동검증 시스템 초기화 중...');
@@ -1019,6 +1029,16 @@ async function connectToRelay(relayUrl, password) {
     // 리스팅 서버에서 다른 중계서버 목록 가져오기
     await fetchRelayListFromListingServer();
     
+    // 블록 동기화 시작 (중계서버 연결 후)
+    console.log('🔄 블록 동기화 시작...');
+    setTimeout(async () => {
+      try {
+        await requestBlockSync();
+      } catch (error) {
+        console.error('❌ 자동 블록 동기화 실패:', error.message);
+      }
+    }, 2000); // 2초 후 시작 (연결 안정화 대기)
+    
     // 주기적으로 중계서버 리스트 업데이트 (5분마다)
     setInterval(async () => {
       console.log('🔄 중계서버 리스트 업데이트 중...');
@@ -1093,6 +1113,14 @@ async function handleRelayMessage(message) {
       try {
         const { block, source, sourceRelayId, originalValidatorDID } = message;
         
+        // 자신이 생성한 블록인지 확인
+        const isSelfGenerated = originalValidatorDID === validatorDID;
+        
+        if (isSelfGenerated) {
+          console.log(`📦 자신이 생성한 블록 #${block.index} 중계서버에서 수신 (전파 확인)`);
+          return; // 자신이 생성한 블록은 처리하지 않음
+        }
+        
         if (source === 'external') {
           console.log(`🔄 외부 블록 수신: 블록 #${block.index} (원본 검증자: ${originalValidatorDID?.substring(0, 8)}...)`);
           
@@ -1103,13 +1131,31 @@ async function handleRelayMessage(message) {
           if (addResult.success) {
             console.log(`✅ 외부 블록 #${block.index} 체인에 추가 완료`);
             
+            // 거버넌스 제안 트랜잭션이 포함되어 있는지 확인
+            const hasGovernanceProposal = block.transactions?.some(tx => {
+              console.log(`🔍 트랜잭션 타입 체크: ${tx.data?.type || 'undefined'} (전체 데이터: ${JSON.stringify(tx.data)})`);
+              return tx.data?.type === 'governance_proposal_creation';
+            });
+            
+            console.log(`📊 블록 #${block.index} 거버넌스 제안 포함 여부: ${hasGovernanceProposal}`);
+            
             // 모든 웹앱 클라이언트에게 블록 업데이트 알림
             broadcastStateUpdate(null, {
               type: 'block_update',
               blockIndex: block.index,
               source: 'external',
-              validatorDID: originalValidatorDID
+              validatorDID: originalValidatorDID,
+              hasGovernanceProposal: hasGovernanceProposal
             });
+            
+            // 거버넌스 제안이 포함된 경우 제안 목록 새로고침 알림
+            if (hasGovernanceProposal) {
+              broadcastStateUpdate(null, {
+                type: 'governance_proposals_updated',
+                blockIndex: block.index,
+                source: 'external'
+              });
+            }
           } else {
             console.warn(`⚠️ 외부 블록 #${block.index} 추가 실패:`, addResult.error);
           }
@@ -1118,6 +1164,269 @@ async function handleRelayMessage(message) {
         console.error('❌ 외부 블록 처리 실패:', error.message);
       }
       break;
+      
+    case 'block_sync_request':
+      // 블록 동기화 요청 수신 (중계서버에서 전달됨)
+      try {
+        console.log(`🔄 블록 동기화 요청 수신: ${message.requesterId}`);
+        await handleBlockSyncRequest(message);
+      } catch (error) {
+        console.error('❌ 블록 동기화 요청 처리 실패:', error.message);
+      }
+      break;
+  }
+}
+
+// 블록 동기화용 최신 중계서버 선택 함수
+function selectLatestRelayForSync() {
+  console.log('🔍 블록 동기화용 중계서버 선택 중...');
+  
+  // 자신을 제외한 활성 중계서버들 조회
+  const allRelays = Array.from(relayServersList.values());
+  console.log(`📡 전체 중계서버 수: ${allRelays.length}개`);
+  
+  // 현재 자신의 중계서버 URL 확인 (WebSocket URL에서 HTTP URL로 변환)
+  let myRelayUrl = null;
+  if (tunnelWs && tunnelWs.url) {
+    // wss://bprelay1.fly.dev/tunnel -> https://bprelay1.fly.dev
+    myRelayUrl = tunnelWs.url.replace('wss://', 'https://').replace('/tunnel', '');
+  }
+  console.log(`🔗 내 중계서버 URL: ${myRelayUrl || '없음'}`);
+  
+  // 자신을 제외하고 활성 상태인 중계서버들만 필터링 (5분 이내 활성)
+  const activeRelays = allRelays.filter(relay => {
+    const isActive = Date.now() - relay.lastUpdate < 300000; // 5분 이내
+    const isSelf = myRelayUrl && relay.url === myRelayUrl;
+    const shouldInclude = isActive && !isSelf;
+    
+    console.log(`📊 중계서버 ${relay.url}: 활성=${isActive}, 자신=${isSelf}, 포함=${shouldInclude}`);
+    return shouldInclude;
+  });
+  
+  console.log(`🎯 동기화 대상 중계서버: ${activeRelays.length}개`);
+  
+  if (activeRelays.length === 0) {
+    console.log('❌ 동기화할 수 있는 중계서버가 없습니다');
+    return null;
+  }
+  
+  // 가장 최근에 업데이트된 중계서버 선택
+  const latestRelay = activeRelays.reduce((latest, current) => {
+    return current.lastUpdate > latest.lastUpdate ? current : latest;
+  });
+  
+  const timeDiff = Math.floor((Date.now() - latestRelay.lastUpdate) / 1000);
+  console.log(`✅ 선택된 중계서버: ${latestRelay.url} (${timeDiff}초 전 업데이트)`);
+  
+  return latestRelay;
+}
+
+// 블록 동기화 요청 전송 함수
+async function requestBlockSync() {
+  console.log('🔄 블록 동기화 시작...');
+  
+  // 동기화할 중계서버 선택 (리스트는 이미 최신 상태)
+  const targetRelay = selectLatestRelayForSync();
+  if (!targetRelay) {
+    console.log('❌ 블록 동기화를 위한 중계서버를 찾을 수 없습니다');
+    return;
+  }
+  
+  // HTTP API로 중계서버에 직접 블록 동기화 요청 전송
+  console.log(`📤 블록 동기화 요청 전송 시작: ${targetRelay.url}`);
+  
+  // AbortController로 타임아웃 처리
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, 30000);
+  
+  try {
+    const requestBody = {
+      requesterId: validatorDID || 'unknown',
+      sourceRelayUrl: tunnelWs ? tunnelWs.url.replace('wss://', 'https://').replace('/tunnel', '') : 'unknown',
+      timestamp: Date.now()
+    };
+    
+    console.log(`📋 요청 데이터:`, requestBody);
+    
+    const response = await fetch(`${targetRelay.url}/api/block-sync-request`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    
+    console.log(`📡 HTTP 응답 상태: ${response.status} ${response.statusText}`);
+    
+    if (response.ok) {
+      const syncData = await response.json();
+      console.log(`✅ 블록 동기화 요청 성공: ${targetRelay.url}`);
+      console.log(`📊 응답 데이터:`, syncData);
+      
+      if (syncData.success && syncData.blocks && syncData.blocks.length > 0) {
+        console.log(`📦 ${syncData.blocks.length}개 블록 수신됨 - 동기화 처리 중...`);
+        
+        // 받은 블록들을 직접 처리
+        await handleBlockSyncResponse({
+          blocks: syncData.blocks,
+          totalBlocks: syncData.totalBlocks,
+          responderId: syncData.responderId,
+          timestamp: syncData.timestamp || Date.now()
+        });
+      } else {
+        console.log('ℹ️ 동기화할 블록이 없습니다');
+        console.log(`📋 서버 응답:`, syncData);
+      }
+    } else {
+      const errorText = await response.text();
+      console.error(`❌ 블록 동기화 요청 실패: ${targetRelay.url} (${response.status})`);
+      console.error(`📋 에러 응답:`, errorText);
+    }
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error(`❌ 블록 동기화 요청 타임아웃: ${targetRelay.url}`);
+    } else {
+      console.error(`❌ 블록 동기화 요청 오류: ${error.message}`);
+      console.error(`📋 에러 스택:`, error.stack);
+    }
+  }
+}
+
+// 블록 동기화 요청 처리 함수
+async function handleBlockSyncRequest(message) {
+  try {
+    console.log(`🔄 검증자에서 블록 동기화 요청 수신!`);
+    console.log(`📋 요청 메시지:`, message);
+    
+    const { requesterId, sourceRelayUrl, timestamp } = message;
+    
+    console.log(`🔍 요청자: ${requesterId} (from: ${sourceRelayUrl})`);
+    
+    // 현재 블록체인의 모든 블록 데이터 수집
+    const blockchain = protocol.getBlockchain();
+    if (!blockchain) {
+      console.log('❌ 블록체인이 초기화되지 않음');
+      return;
+    }
+    
+    const allBlocks = blockchain.chain || [];
+    console.log(`📊 전송할 블록 수: ${allBlocks.length}개`);
+    
+    // 블록 동기화 응답 생성
+    const syncResponse = {
+      type: 'block_sync_response',
+      requesterId: requesterId,
+      responderId: validatorDID || 'unknown',
+      blocks: allBlocks,
+      totalBlocks: allBlocks.length,
+      timestamp: Date.now()
+    };
+    
+    console.log(`📤 블록 동기화 응답 준비 완료:`, {
+      type: syncResponse.type,
+      requesterId: syncResponse.requesterId,
+      responderId: syncResponse.responderId,
+      blocksCount: syncResponse.blocks.length,
+      totalBlocks: syncResponse.totalBlocks
+    });
+    
+    // WebSocket 터널을 통해 응답 전송
+    if (tunnelWs && tunnelConnected) {
+      console.log(`📤 중계서버로 블록 동기화 응답 전송: ${allBlocks.length}개 블록`);
+      tunnelWs.send(JSON.stringify(syncResponse));
+      console.log(`✅ 블록 동기화 응답 전송 완료`);
+    } else {
+      console.log('❌ 중계서버 터널 연결이 없어 블록 동기화 응답을 전송할 수 없습니다');
+      console.log(`🔗 터널 상태: tunnelWs=${!!tunnelWs}, connected=${tunnelConnected}`);
+    }
+    
+  } catch (error) {
+    console.error('❌ 블록 동기화 요청 처리 실패:', error.message);
+    console.error('📋 에러 스택:', error.stack);
+  }
+}
+
+// 블록 동기화 응답 처리 함수
+async function handleBlockSyncResponse(message) {
+  try {
+    const { blocks, totalBlocks, responderId, timestamp } = message;
+    
+    console.log(`📦 블록 동기화 응답 처리: ${responderId}에서 ${totalBlocks}개 블록 수신`);
+    
+    if (!blocks || blocks.length === 0) {
+      console.log('ℹ️ 동기화할 블록이 없습니다');
+      return;
+    }
+    
+    const blockchain = protocol.getBlockchain();
+    if (!blockchain) {
+      console.log('❌ 블록체인이 초기화되지 않음');
+      return;
+    }
+    
+    let syncedBlocks = 0;
+    let skippedBlocks = 0;
+    
+    // 각 블록을 순차적으로 검증하고 추가
+    for (const block of blocks) {
+      try {
+        // 이미 존재하는 블록인지 확인
+        const existingBlock = blockchain.chain.find(b => b.index === block.index);
+        if (existingBlock) {
+          console.log(`⏭️ 블록 #${block.index} 이미 존재함 - 건너뜀`);
+          skippedBlocks++;
+          continue;
+        }
+        
+        // 외부 블록으로 추가 시도
+        const addResult = blockchain.addExternalBlock(block);
+        
+        if (addResult.success) {
+          console.log(`✅ 블록 #${block.index} 동기화 완료`);
+          syncedBlocks++;
+          
+          // 거버넌스 제안이 포함된 블록이면 알림
+          const hasGovernanceProposal = block.transactions?.some(tx => 
+            tx.data?.type === 'governance_proposal_creation'
+          );
+          
+          if (hasGovernanceProposal) {
+            console.log(`📊 블록 #${block.index}에 거버넌스 제안 포함됨`);
+            broadcastStateUpdate(null, {
+              type: 'governance_proposals_updated',
+              blockIndex: block.index,
+              source: 'sync'
+            });
+          }
+          
+        } else {
+          console.warn(`⚠️ 블록 #${block.index} 동기화 실패: ${addResult.error}`);
+        }
+        
+      } catch (blockError) {
+        console.error(`❌ 블록 #${block.index} 처리 오류:`, blockError.message);
+      }
+    }
+    
+    console.log(`🎉 블록 동기화 완료: 총 ${totalBlocks}개 중 ${syncedBlocks}개 추가, ${skippedBlocks}개 건너뜀`);
+    
+    // 클라이언트들에게 동기화 완료 알림
+    broadcastStateUpdate(null, {
+      type: 'block_sync_completed',
+      syncedBlocks: syncedBlocks,
+      skippedBlocks: skippedBlocks,
+      totalBlocks: totalBlocks,
+      source: responderId
+    });
+    
+  } catch (error) {
+    console.error('❌ 블록 동기화 응답 처리 실패:', error.message);
   }
 }
 
@@ -1922,9 +2231,111 @@ async function processHttpRequest(method, path, headers, body, query) {
       }
     }
     
+    // 거버넌스 제안 생성
+    if (path === '/governance/proposals' && method === 'POST') {
+      try {
+        const proposalData = JSON.parse(body);
+        
+        // 필수 필드 검증
+        if (!proposalData.title || !proposalData.description || !proposalData.proposerDID) {
+          return {
+            status: 400,
+            data: { success: false, error: '필수 필드가 누락되었습니다' }
+          };
+        }
+
+        // 제안 ID 생성
+        const proposalId = `prop-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
+        // 통합 거버넌스 제안 생성
+        const proposal = {
+          id: proposalId,
+          title: proposalData.title,
+          description: proposalData.description,
+          author: {
+            did: proposalData.proposerDID,
+            username: 'User' // 실제로는 DID에서 사용자명 조회
+          },
+          createdAt: Date.now(),
+          status: 'active',
+          voteCount: 0,
+          agreeCount: 0,
+          disagreeCount: 0,
+          type: proposalData.type || 'general',
+          label: 'governance',
+          hasStructure: false
+        };
+
+        // 스토리지에 저장
+        protocol.components.storage.saveGovernanceProposal(proposalId, proposal);
+
+        // 트랜잭션 생성 (제안 생성 기록)
+        const Transaction = require('./src/blockchain/Transaction');
+        const proposalTransaction = new Transaction(
+          proposalData.proposerDID,
+          'did:baekya:system0000000000000000000000000000000001',
+          0, // 금액 없음
+          'B-Token',
+          {
+            type: 'governance_proposal_creation',
+            proposalId: proposalId,
+            title: proposalData.title,
+            description: proposalData.description,
+            proposalType: proposalData.type || 'general',
+            timestamp: Date.now()
+          }
+        );
+
+        // 트랜잭션 서명 (테스트 환경)
+        proposalTransaction.sign('test-private-key');
+
+        // 블록체인에 트랜잭션 추가
+        const addResult = protocol.components.blockchain.addTransaction(proposalTransaction);
+        
+        if (!addResult.success) {
+          throw new Error(`트랜잭션 추가 실패: ${addResult.error}`);
+        }
+
+        // 수수료 처리 트랜잭션 (별도)
+        if (proposalData.fee && proposalData.fee > 0) {
+          const feeTransaction = new Transaction(
+            proposalData.proposerDID,
+            'did:baekya:system0000000000000000000000000000000001',
+            proposalData.fee,
+            'B-Token',
+            {
+              type: 'proposal_fee',
+              proposalId: proposalId,
+              description: '제안 생성 수수료'
+            }
+          );
+          feeTransaction.sign('test-private-key');
+          protocol.components.blockchain.addTransaction(feeTransaction);
+        }
+
+        return {
+          status: 201,
+          data: {
+            success: true,
+            proposalId: proposalId,
+            transactionHash: proposalTransaction.hash,
+            message: '제안이 성공적으로 생성되었습니다'
+          }
+        };
+
+      } catch (error) {
+        console.error('제안 생성 실패:', error);
+        return {
+          status: 500,
+          data: { success: false, error: '제안 생성 실패', details: error.message }
+        };
+      }
+    }
+
     // 거버넌스 제안 목록 조회
     if (path === '/governance/proposals' && method === 'GET') {
       try {
+        // 통합 거버넌스 시스템에서 제안 조회
         const allProposals = protocol.components.storage.getGovernanceProposals() || [];
         
         // 협업 단계 제안 찾기
@@ -2184,7 +2595,7 @@ async function processHttpRequest(method, path, headers, body, query) {
     // 거버넌스 제안 생성
     if (path === '/governance/proposals' && method === 'POST') {
       try {
-        const { title, description, label, hasStructure, structureFiles, authorDID } = body;
+        const { title, description, label, hasStructure, repositoryUrl, authorDID } = body;
        const cost = 5; // 제안 생성 비용 고정: 5B
         
         if (!title || !description || !label || !authorDID) {
@@ -2194,11 +2605,11 @@ async function processHttpRequest(method, path, headers, body, query) {
           };
         }
         
-        // 코어구조 파일 필수 검증
-        if (!hasStructure || !structureFiles || structureFiles.length === 0) {
+        // 레포지토리 URL 필수 검증
+        if (!hasStructure || !repositoryUrl) {
           return {
             status: 400,
-            data: { success: false, error: '코어구조 파일을 업로드해주세요. 제안에는 반드시 코어구조가 포함되어야 합니다.' }
+            data: { success: false, error: '레포지토리 URL을 입력하고 확인해주세요. 제안에는 반드시 코어구조가 포함되어야 합니다.' }
           };
         }
         
@@ -2235,8 +2646,7 @@ async function processHttpRequest(method, path, headers, body, query) {
           description: description,
           label: label,
           hasStructure: hasStructure,
-          structureFiles: structureFiles || [],
-          fileCount: structureFiles ? structureFiles.length : 0,
+          repositoryUrl: repositoryUrl,
           author: {
             did: authorDID,
             username: username
@@ -3333,8 +3743,37 @@ app.get('/api/invite-code', async (req, res) => {
 // 레포지토리 URL만 저장 (간소화된 버전)
 app.post('/api/repository-url', async (req, res) => {
   try {
-    const repositoryData = req.body;
-    console.log('📥 레포지토리 URL 저장 요청:', repositoryData.name);
+    let repositoryData;
+    
+    // 터널 요청인 경우 헤더에서 body 데이터 추출
+    if (req.headers['x-tunnel-request'] === 'true') {
+      const tunnelBody = req.headers['x-tunnel-body'];
+      
+      if (tunnelBody) {
+        try {
+          // base64 디코딩 후 JSON 파싱
+          const decodedBody = Buffer.from(tunnelBody, 'base64').toString('utf8');
+          repositoryData = JSON.parse(decodedBody);
+        } catch (parseError) {
+          console.error('❌ 터널 body 파싱 실패:', parseError);
+          return res.status(400).json({
+            success: false,
+            error: '요청 데이터 파싱 실패'
+          });
+        }
+      } else {
+        console.error('❌ 터널 body가 없습니다');
+        return res.status(400).json({
+          success: false,
+          error: '요청 데이터가 없습니다'
+        });
+      }
+    } else {
+      // 일반 요청
+      repositoryData = req.body;
+    }
+    
+    console.log('📥 레포지토리 URL 저장 요청:', repositoryData?.ipfsUrl, '(', repositoryData?.name, ')');
     
     if (!repositoryData || !repositoryData.repositoryId) {
       return res.status(400).json({
@@ -3388,6 +3827,109 @@ app.post('/api/repository-url', async (req, res) => {
     
   } catch (error) {
     console.error('❌ 레포지토리 URL 저장 실패:', error);
+    res.status(500).json({
+      success: false,
+      error: '서버 오류가 발생했습니다'
+    });
+  }
+});
+
+// 레포지토리 URL 확인 API
+app.post('/api/verify-repository-url', async (req, res) => {
+  try {
+    let verificationData;
+    
+    // 터널 요청인 경우 헤더에서 body 데이터 추출
+    if (req.headers['x-tunnel-request'] === 'true') {
+      const tunnelBody = req.headers['x-tunnel-body'];
+      
+      if (tunnelBody) {
+        try {
+          const decodedBody = Buffer.from(tunnelBody, 'base64').toString('utf8');
+          verificationData = JSON.parse(decodedBody);
+        } catch (parseError) {
+          console.error('❌ 터널 body 파싱 실패:', parseError);
+          return res.status(400).json({
+            success: false,
+            error: '요청 데이터 파싱 실패'
+          });
+        }
+      } else {
+        return res.status(400).json({
+          success: false,
+          error: '요청 데이터가 없습니다'
+        });
+      }
+    } else {
+      verificationData = req.body;
+    }
+    
+    const { ipfsUrl, userDID } = verificationData;
+    console.log('🔍 레포지토리 URL 확인 요청:', ipfsUrl);
+    
+    if (!ipfsUrl) {
+      return res.status(400).json({
+        success: false,
+        error: 'IPFS URL이 필요합니다'
+      });
+    }
+    
+    // 블록체인에서 레포지토리 URL 검색
+    const blockchain = protocol.components.blockchain;
+    let foundRepository = null;
+    
+    // 최신 블록부터 검색
+    for (let i = blockchain.chain.length - 1; i >= 0; i--) {
+      const block = blockchain.chain[i];
+      for (const transaction of block.transactions) {
+        // 트랜잭션 타입과 데이터 확인 (여러 가능성 고려)
+        const isRepoUrlTransaction = (
+          transaction.type === 'REPOSITORY_URL' || 
+          transaction.type === 'repository_url' ||
+          (transaction.data && transaction.data.type === 'REPOSITORY_URL')
+        );
+        
+        if (isRepoUrlTransaction) {
+          // 데이터 위치 확인 (transaction.data 또는 transaction 자체)
+          const dataSource = transaction.data || transaction;
+          
+          if (dataSource.ipfsUrl === ipfsUrl) {
+            foundRepository = {
+              repositoryName: dataSource.name,
+              authorDID: dataSource.authorDID,
+              createdAt: dataSource.createdAt,
+              repositoryId: dataSource.repositoryId,
+              ipfsHash: dataSource.ipfsHash
+            };
+            console.log('🔍 블록체인에서 레포지토리 발견:', foundRepository.repositoryName, foundRepository.repositoryId);
+            break;
+          }
+        }
+      }
+      if (foundRepository) break;
+    }
+    
+    if (foundRepository) {
+      console.log('✅ 레포지토리 URL 확인 성공:', foundRepository.repositoryName);
+      res.json({
+        success: true,
+        verified: true,
+        repositoryName: foundRepository.repositoryName,
+        authorDID: foundRepository.authorDID,
+        createdAt: foundRepository.createdAt,
+        repositoryId: foundRepository.repositoryId
+      });
+    } else {
+      console.log('❌ 레포지토리 URL을 블록체인에서 찾을 수 없음');
+      res.json({
+        success: true,
+        verified: false,
+        error: 'BROTHERHOOD에 등록되지 않은 URL입니다'
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ 레포지토리 URL 확인 실패:', error);
     res.status(500).json({
       success: false,
       error: '서버 오류가 발생했습니다'
@@ -5472,7 +6014,7 @@ app.post('/api/governance/proposals', async (req, res) => {
   try {
     console.log('🏛️ 거버넌스 제안 생성 요청 수신');
     
-    let title, description, label, hasStructure, structureFiles, authorDID;
+    let title, description, label, hasStructure, repositoryUrl, authorDID;
     
     // 터널 요청인 경우 헤더에서 body 데이터 추출
     if (req.headers['x-tunnel-request'] === 'true') {
@@ -5487,7 +6029,7 @@ app.post('/api/governance/proposals', async (req, res) => {
           description = parsedBody.description;
           label = parsedBody.label;
           hasStructure = parsedBody.hasStructure;
-          structureFiles = parsedBody.structureFiles;
+          repositoryUrl = parsedBody.repositoryUrl;
           authorDID = parsedBody.authorDID;
         } catch (parseError) {
           console.error('❌ 터널 body 파싱 실패:', parseError);
@@ -5496,7 +6038,7 @@ app.post('/api/governance/proposals', async (req, res) => {
       }
     } else {
       // 일반 요청인 경우 req.body에서 추출
-      ({ title, description, label, hasStructure, structureFiles, authorDID } = req.body);
+      ({ title, description, label, hasStructure, repositoryUrl, authorDID } = req.body);
     }
     const cost = 5; // 제안 생성 비용 고정: 5B
     
@@ -5506,24 +6048,23 @@ app.post('/api/governance/proposals', async (req, res) => {
     console.log('  - label:', label);
     console.log('  - authorDID:', authorDID);
     console.log('  - hasStructure:', hasStructure);
-    console.log('  - structureFiles:', structureFiles);
+    console.log('  - repositoryUrl:', repositoryUrl);
     
     if (!title || !description || !label || !authorDID) {
       console.log('❌ 필수 필드 누락');
       return res.status(400).json({ success: false, error: '필수 필드가 누락되었습니다' });
     }
     
-    // 코어구조 파일 필수 검증
-    console.log('📁 코어구조 파일 검증:');
+    // 레포지토리 URL 필수 검증
+    console.log('📁 레포지토리 URL 검증:');
     console.log('  - hasStructure:', hasStructure);
-    console.log('  - structureFiles:', structureFiles);
-    console.log('  - structureFiles.length:', structureFiles ? structureFiles.length : 'undefined');
+    console.log('  - repositoryUrl:', repositoryUrl);
     
-    if (!hasStructure || !structureFiles || structureFiles.length === 0) {
-      console.log('❌ 코어구조 파일 누락');
+    if (!hasStructure || !repositoryUrl) {
+      console.log('❌ 레포지토리 URL 누락');
       return res.status(400).json({ 
         success: false, 
-        error: '코어구조 파일을 업로드해주세요. 제안에는 반드시 코어구조가 포함되어야 합니다.' 
+        error: '레포지토리 URL을 입력하고 확인해주세요. 제안에는 반드시 코어구조가 포함되어야 합니다.' 
       });
     }
     
@@ -5549,13 +6090,15 @@ app.post('/api/governance/proposals', async (req, res) => {
     const userInfo = protocol.components.storage.getUserInfo(authorDID);
     let username = 'Unknown';
     
-    if (userInfo && userInfo.username) {
-      username = userInfo.username;
+    if (userInfo) {
+      // name을 우선 사용, 없으면 username 사용
+      username = userInfo.name || userInfo.username || 'Unknown';
     } else {
       // SimpleAuth에서 DID 정보 조회 시도
       const didInfo = protocol.components.authSystem.getDIDInfo(authorDID);
       if (didInfo.success && didInfo.didData) {
-        username = didInfo.didData.username;
+        // name을 우선 사용, 없으면 username 사용
+        username = didInfo.didData.name || didInfo.didData.username || 'Unknown';
       }
     }
     
@@ -5576,7 +6119,7 @@ app.post('/api/governance/proposals', async (req, res) => {
       createdAt: Date.now(),
       lastUpdated: Date.now(),
       hasStructure: hasStructure,
-      structureFiles: structureFiles || [],
+      repositoryUrl: repositoryUrl,
       cost: cost,
       reports: []
     };
@@ -5600,6 +6143,33 @@ app.post('/api/governance/proposals', async (req, res) => {
         success: false, 
         error: `제안 비용 처리 실패: ${addResult.error}` 
       });
+    }
+    
+    // 거버넌스 제안 생성 트랜잭션 추가 (네트워크 전파용)
+    const proposalCreationTx = new Transaction(
+      authorDID,
+      'did:baekya:system0000000000000000000000000000000001',
+      0, // 금액 없음
+      'B-Token',
+      {
+        type: 'governance_proposal_creation',
+        proposalId: proposalId,
+        title: title,
+        description: description,
+        label: label,
+        hasStructure: hasStructure,
+        repositoryUrl: repositoryUrl,
+        proposalType: 'governance',
+        timestamp: Date.now()
+      }
+    );
+    proposalCreationTx.sign('test-key');
+    
+    // 제안 생성 트랜잭션도 블록체인에 추가
+    const creationResult = protocol.getBlockchain().addTransaction(proposalCreationTx);
+    if (!creationResult.success) {
+      console.warn(`⚠️ 제안 생성 트랜잭션 추가 실패: ${creationResult.error}`);
+      // 비용은 이미 차감되었으므로 계속 진행
     }
     
     // 제안 저장
@@ -6167,6 +6737,148 @@ function startBlockGeneration() {
   blockGenerationTimer = setInterval(() => {
     generateBlock();
   }, 1000);
+  
+  // 터미널 명령어 처리
+  setupBlockchainCommands();
+}
+
+// 블록체인 명령어 처리 설정
+function setupBlockchainCommands() {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  
+  console.log('\n💡 사용 가능한 명령어:');
+  console.log('  📋 help - 명령어 도움말');
+  console.log('  🔄 sync - 블록 동기화 실행');
+  console.log('  📊 status - 블록체인 상태 조회');
+  console.log('  🔗 relays - 중계서버 목록 조회');
+  console.log('  📦 blocks - 최근 블록 조회');
+  console.log('  🚪 exit - 프로그램 종료');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+  
+  const askCommand = () => {
+    rl.question('⌨️  명령어를 입력하세요: ', async (command) => {
+      const cmd = command.trim().toLowerCase();
+      
+      try {
+        switch (cmd) {
+          case 'help':
+          case 'h':
+            console.log('\n📋 명령어 도움말:');
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            console.log('🔄 sync    - 다른 노드에서 블록 동기화');
+            console.log('📊 status  - 현재 블록체인 상태 표시');
+            console.log('🔗 relays  - 등록된 중계서버 목록 표시');
+            console.log('📦 blocks  - 최근 생성된 블록 목록 (최대 10개)');
+            console.log('📋 help    - 이 도움말 표시');
+            console.log('🚪 exit    - 프로그램 종료');
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+            break;
+            
+          case 'sync':
+            console.log('\n🔄 블록 동기화를 시작합니다...');
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            await requestBlockSync();
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+            break;
+            
+          case 'status':
+            console.log('\n📊 블록체인 상태:');
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            const blockchain = protocol.getBlockchain();
+            const chain = blockchain.chain || [];
+            const latestBlock = chain[chain.length - 1];
+            
+            console.log(`📦 총 블록 수: ${chain.length}개`);
+            console.log(`⛏️  생성한 블록: ${blocksGenerated}개`);
+            console.log(`👤 검증자: ${validatorUsername} (${validatorDID?.substring(0, 8)}...)`);
+            
+            if (latestBlock) {
+              console.log(`🔗 최신 블록: #${latestBlock.index}`);
+              console.log(`⏰ 최신 블록 시간: ${new Date(latestBlock.timestamp).toLocaleString()}`);
+              console.log(`📄 최신 블록 트랜잭션: ${latestBlock.transactions?.length || 0}개`);
+            }
+            
+            const pendingTxs = blockchain.pendingTransactions || [];
+            console.log(`⏳ 대기 중인 트랜잭션: ${pendingTxs.length}개`);
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+            break;
+            
+          case 'relays':
+            console.log('\n🔗 중계서버 목록:');
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            
+            if (relayServersList.size === 0) {
+              console.log('❌ 등록된 중계서버가 없습니다');
+            } else {
+              const allRelays = Array.from(relayServersList.values());
+              allRelays.forEach((relay, index) => {
+                const timeDiff = Math.floor((Date.now() - relay.lastUpdate) / 1000);
+                const isActive = timeDiff < 300; // 5분 이내
+                const status = isActive ? '🟢 활성' : '🔴 비활성';
+                
+                console.log(`${index + 1}. ${relay.url}`);
+                console.log(`   상태: ${status} (${timeDiff}초 전 업데이트)`);
+                console.log(`   위치: ${relay.location}`);
+                console.log('');
+              });
+            }
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+            break;
+            
+          case 'blocks':
+            console.log('\n📦 최근 블록 목록:');
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            
+            const blockchainForBlocks = protocol.getBlockchain();
+            const chainForBlocks = blockchainForBlocks.chain || [];
+            const recentBlocks = chainForBlocks.slice(-10).reverse(); // 최근 10개, 역순
+            
+            if (recentBlocks.length === 0) {
+              console.log('❌ 블록이 없습니다');
+            } else {
+              recentBlocks.forEach((block, index) => {
+                const time = new Date(block.timestamp).toLocaleString();
+                const txCount = block.transactions?.length || 0;
+                
+                console.log(`${index + 1}. 블록 #${block.index}`);
+                console.log(`   시간: ${time}`);
+                console.log(`   트랜잭션: ${txCount}개`);
+                console.log(`   해시: ${block.hash?.substring(0, 16)}...`);
+                console.log('');
+              });
+            }
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+            break;
+            
+          case 'exit':
+          case 'quit':
+          case 'q':
+            console.log('\n👋 프로그램을 종료합니다...');
+            rl.close();
+            process.exit(0);
+            break;
+            
+          default:
+            if (cmd) {
+              console.log(`\n❓ 알 수 없는 명령어: "${command}"`);
+              console.log('💡 "help" 명령어로 사용 가능한 명령어를 확인하세요.\n');
+            }
+            break;
+        }
+      } catch (error) {
+        console.error(`\n❌ 명령어 실행 중 오류: ${error.message}\n`);
+      }
+      
+      // 다음 명령어 대기
+      askCommand();
+    });
+  };
+  
+  // 명령어 입력 시작
+  askCommand();
 }
 
 // 블록 생성 및 DCA 처리
@@ -6404,17 +7116,123 @@ process.on('SIGINT', () => {
     clearInterval(blockGenerationTimer);
   }
   
-  // WebSocket Tunnel 정리
-  if (tunnelWs) {
-    console.log('🔄 WebSocket 터널 종료 중...');
-    tunnelWs.close();
-    tunnelWs = null;
-    tunnelConnected = false;
+  // 모든 클라이언트 WebSocket 연결 종료
+  console.log('🔄 모든 WebSocket 연결 종료 중...');
+  
+  // 연결된 클라이언트들에게 서버 종료 알림 전송
+  wss.clients.forEach(ws => {
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({
+          type: 'server_shutdown',
+          message: '서버가 종료됩니다. 잠시 후 다시 연결해주세요.'
+        }));
+        ws.close(1001, 'Server shutdown');
+      } catch (error) {
+        console.warn('⚠️ 클라이언트 연결 종료 실패:', error.message);
+        ws.terminate();
+      }
+    }
+  });
+  
+  // WebSocket 서버 종료
+  wss.close(() => {
+    console.log('✅ WebSocket 서버 종료 완료');
+  });
+  
+  // 클라이언트 맵 정리
+  if (typeof clients !== 'undefined' && clients) {
+    clients.clear();
+    console.log('🗑️ 클라이언트 맵 정리 완료');
   }
   
+  if (typeof clientSessions !== 'undefined' && clientSessions) {
+    clientSessions.clear();
+    console.log('🗑️ 클라이언트 세션 맵 정리 완료');
+  }
 
-
-  process.exit(0);
+  // WebSocket Tunnel 정리 및 릴레이 서버에 종료 신호 전송
+  if (tunnelWs && tunnelConnected) {
+    console.log('🔄 릴레이 서버에 종료 신호 전송 중...');
+    try {
+      tunnelWs.send(JSON.stringify({
+        type: 'validator_disconnect',
+        nodeId: nodeId,
+        timestamp: Date.now(),
+        reason: 'graceful_shutdown'
+      }));
+      
+      // 잠시 기다린 후 연결 종료
+      setTimeout(() => {
+        if (tunnelWs) {
+          console.log('🔄 WebSocket 터널 종료 중...');
+          tunnelWs.close();
+          tunnelWs = null;
+          tunnelConnected = false;
+        }
+      }, 500);
+    } catch (error) {
+      console.log('⚠️ 종료 신호 전송 실패, 터널 직접 종료:', error.message);
+      tunnelWs.close();
+      tunnelWs = null;
+      tunnelConnected = false;
+    }
+  }
+  
+  // WebSocket 정리 완료 후 프로세스 종료
+  setTimeout(() => {
+    // 백야데이터 파일 내용 초기화 (폴더는 유지)
+    const fs = require('fs');
+    const path = require('path');
+    const dataDir = path.join(__dirname, 'baekya_data');
+    
+    try {
+      if (fs.existsSync(dataDir)) {
+        console.log('🧹 백야데이터 파일 내용 초기화 시작...');
+        
+        // protocol_data.json 초기화
+        const protocolDataFile = path.join(dataDir, 'protocol_data.json');
+        if (fs.existsSync(protocolDataFile)) {
+          const initialData = {
+            blockchain: {
+              chain: [],
+              difficulty: 4,
+              miningReward: 10,
+              pendingTransactions: []
+            },
+            accounts: {},
+            sessions: {},
+            lastBlockTime: Date.now()
+          };
+          fs.writeFileSync(protocolDataFile, JSON.stringify(initialData, null, 2));
+          console.log('✅ protocol_data.json 초기화 완료');
+        }
+        
+        // active_sessions.json 초기화
+        const sessionsFile = path.join(dataDir, 'active_sessions.json');
+        if (fs.existsSync(sessionsFile)) {
+          fs.writeFileSync(sessionsFile, JSON.stringify({}, null, 2));
+          console.log('✅ active_sessions.json 초기화 완료');
+        }
+        
+        // temp_devices_backup.json 초기화
+        const devicesFile = path.join(dataDir, 'temp_devices_backup.json');
+        if (fs.existsSync(devicesFile)) {
+          fs.writeFileSync(devicesFile, JSON.stringify({}, null, 2));
+          console.log('✅ temp_devices_backup.json 초기화 완료');
+        }
+        
+        console.log('🗑️ 백야데이터 파일 내용 초기화 완료 (폴더 유지)');
+      } else {
+        console.log('📁 백야데이터 폴더가 존재하지 않음');
+      }
+    } catch (error) {
+      console.warn('⚠️ 백야데이터 초기화 실패:', error.message);
+    }
+    
+    console.log('✅ 서버 종료 완료');
+    process.exit(0);
+  }, 1000);
 });
 
 // GitHub 웹훅 자동 설정 (GitHub API 사용)

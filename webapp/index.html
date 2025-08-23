@@ -579,10 +579,16 @@
                         <h3>제안 목록</h3>
                         <p>시스템 개선 및 기능 추가를 위한 제안들을 확인하고 참여하세요.</p>
                     </div>
-                    <button class="btn-primary create-proposal-btn" onclick="window.dapp.showCreateProposalModal()">
-                        <i class="fas fa-plus"></i>
-                        생성
-                    </button>
+                    <div class="proposals-actions">
+                        <button class="btn-secondary refresh-proposals-btn" onclick="window.dapp.governanceManager.loadProposals()" title="제안 목록 새로고침">
+                            <i class="fas fa-sync-alt"></i>
+                            새로고침
+                        </button>
+                        <button class="btn-primary create-proposal-btn" onclick="window.dapp.showCreateProposalModal()">
+                            <i class="fas fa-plus"></i>
+                            생성
+                        </button>
+                    </div>
                 </div>
 
                 <div class="proposals-list" id="proposalsList">
@@ -745,49 +751,23 @@
                         </div>
                     </div>
 
-                    <!-- 코어구조 업로드 -->
+                    <!-- 코어구조 레포지토리 URL -->
                     <div class="form-section">
-                        <h4><i class="fas fa-code"></i> 코어구조 <span class="required-indicator">*</span></h4>
-                        <p class="section-description">시스템 수정에 대한 핵심 코드를 업로드하세요. <strong>(필수)</strong></p>
-                        <div class="core-structure-upload">
-                            <div class="upload-options">
-                                <button type="button" class="upload-btn" onclick="document.getElementById('coreStructureInput').click()">
-                                    <i class="fas fa-file-upload"></i>
-                                    파일 선택
-                                </button>
-                                <button type="button" class="upload-btn" onclick="document.getElementById('folderStructureInput').click()">
-                                    <i class="fas fa-folder-open"></i>
-                                    폴더 선택
-                                </button>
-                            </div>
-                            <div class="upload-area" id="uploadArea" 
-                                 ondragover="window.dapp.handleDragOver(event)" 
-                                 ondragenter="window.dapp.handleDragEnter(event)" 
-                                 ondragleave="window.dapp.handleDragLeave(event)" 
-                                 ondrop="window.dapp.handleDrop(event)">
-                                <div class="upload-content">
-                                    <i class="fas fa-cloud-upload-alt"></i>
-                                    <p>코어구조 파일/폴더를 선택하거나 드래그하세요</p>
-                                    <small>지원 형식: .js, .json, .md, .txt, .css, .html (최대 총 20MB)</small>
+                        <h4><i class="fas fa-code"></i> 코어구조 레포지토리 <span class="required-indicator">*</span></h4>
+                        <p class="section-description">시스템 수정에 대한 핵심 코드가 포함된 레포지토리 URL을 입력하세요. <strong>(필수)</strong></p>
+                        <div class="repository-url-input">
+                            <div class="form-group">
+                                <label for="repositoryUrl">레포지토리 URL</label>
+                                <div class="url-input-container">
+                                    <input type="url" id="repositoryUrl" placeholder="https://ipfs.io/ipfs/QmXXXXXX..." required>
+                                    <button type="button" class="verify-btn" onclick="window.dapp.governanceManager.verifyRepositoryUrl()" title="URL 확인">
+                                        <i class="fas fa-check-circle"></i> 확인
+                                    </button>
                                 </div>
-                                <input type="file" id="coreStructureInput" accept=".js,.json,.md,.txt,.css,.html" multiple style="display: none;" onchange="window.dapp.handleCoreStructureUpload(this)">
-                                <input type="file" id="folderStructureInput" webkitdirectory directory style="display: none;" onchange="window.dapp.handleCoreStructureUpload(this)">
+                                <small class="url-help">BROTHERHOOD에서 생성된 레포지토리 URL을 입력해주세요.</small>
                             </div>
-                            <div class="uploaded-structure" id="uploadedStructure" style="display: none;">
-                                <div class="structure-info">
-                                    <div class="structure-header">
-                                        <h5><i class="fas fa-file-code"></i> 업로드된 파일들</h5>
-                                        <button type="button" class="remove-all-btn" onclick="window.dapp.removeAllCoreStructure()">
-                                            <i class="fas fa-trash"></i> 모두 삭제
-                                        </button>
-                                    </div>
-                                    <div class="structure-files" id="structureFilesList">
-                                        <!-- 업로드된 파일들이 표시됩니다 -->
-                                    </div>
-                                    <div class="diff-preview" id="diffPreview">
-                                        <!-- 차이점이 표시됩니다 -->
-                                    </div>
-                                </div>
+                            <div class="url-verification-result" id="urlVerificationResult" style="display: none;">
+                                <!-- URL 확인 결과가 표시됩니다 -->
                             </div>
                         </div>
                     </div>

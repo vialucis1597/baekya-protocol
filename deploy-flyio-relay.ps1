@@ -105,7 +105,7 @@ try {
     
     # Use Fly.io specific files (but keep fly-relay.toml as is)
     Copy-Item "Dockerfile.flyio.relay" "Dockerfile"
-    Copy-Item "railway-relay.json" "package.json"
+    # package.json은 이미 릴레이 서버용으로 설정되어 있어서 그대로 사용
     if (Test-Path ".dockerignore.relay") {
         Copy-Item ".dockerignore.relay" ".dockerignore"
     }

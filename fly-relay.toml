@@ -1,5 +1,5 @@
 # Fly.io app configuration for Baekya Protocol Relay Server
-app = "baekya-relay-server"
+app = "bprelay2"
 primary_region = "nrt"
 
 [build]

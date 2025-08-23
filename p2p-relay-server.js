@@ -328,6 +328,89 @@ app.post('/api/repository-transaction', async (req, res) => {
   }
 });
 
+// 레포지토리 URL 저장 API (HTTP → WebSocket 터널 방식)
+app.post('/api/repository-url', async (req, res) => {
+  try {
+    console.log('📥 레포지토리 URL 저장 요청 수신:', req.body.ipfsUrl, '(', req.body.name, ')');
+    
+    if (!connectedValidator) {
+      return res.status(503).json({
+        success: false,
+        error: '연결된 검증자 노드가 없습니다'
+      });
+    }
+
+    const repositoryData = req.body;
+    
+    // 풀노드로 레포지토리 URL 저장 요청 전달
+    const result = await forwardToValidator(connectedValidator, {
+      method: 'POST',
+      path: '/repository-url',
+      headers: req.headers,
+      body: repositoryData,
+      query: {}
+    });
+    
+    console.log('✅ 레포지토리 URL 저장 처리 결과:', result);
+    res.json({
+      success: true,
+      transactionId: result.transactionId || repositoryData.repositoryId,
+      result: result
+    });
+    
+  } catch (error) {
+    console.error('❌ 레포지토리 URL 저장 처리 실패:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// 레포지토리 URL 확인 API (HTTP → WebSocket 터널 방식)
+app.post('/api/verify-repository-url', async (req, res) => {
+  try {
+    console.log('🔍 레포지토리 URL 확인 요청 수신:', req.body.ipfsUrl);
+    
+    if (!connectedValidator) {
+      return res.status(503).json({
+        success: false,
+        error: '연결된 검증자 노드가 없습니다'
+      });
+    }
+
+    const verificationData = req.body;
+    
+    // 풀노드로 레포지토리 URL 확인 요청 전달
+    const result = await forwardToValidator(connectedValidator, {
+      method: 'POST',
+      path: '/verify-repository-url',
+      headers: req.headers,
+      body: verificationData,
+      query: {}
+    });
+    
+    console.log('✅ 레포지토리 URL 확인 처리 결과:', result);
+    
+    // 래핑된 응답인 경우 실제 데이터 추출
+    let responseData = result;
+    if (result.status && result.data) {
+      responseData = result.data;
+      console.log('📦 래핑된 응답 감지, 실제 데이터 추출:', responseData);
+    }
+    
+    console.log('📤 클라이언트로 전송하는 응답:', responseData);
+    res.json(responseData);
+    
+  } catch (error) {
+    console.error('❌ 레포지토리 URL 확인 처리 실패:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // 레포지토리 목록 조회 API (HTTP → WebSocket 터널 방식)
 app.get('/api/repositories', async (req, res) => {
   try {
@@ -380,15 +463,28 @@ async function forwardToValidator(validator, requestData) {
   try {
     const { method, path, body, query, headers } = requestData;
     
-    console.log(`🔍 검증자 타입: ${validator.type}, WebSocket 상태: ${validator.ws ? 'OK' : 'NULL'}`);
+    // 중요한 요청만 로그 출력 (POST 요청과 특정 경로)
+    const isImportantRequest = method === 'POST' || 
+                              path.includes('/login') || 
+                              path.includes('/register') || 
+                              path.includes('/transfer') || 
+                              path.includes('/repository');
+    
+    if (isImportantRequest) {
+      console.log(`🔍 검증자 타입: ${validator.type}, WebSocket 상태: ${validator.ws ? 'OK' : 'NULL'}`);
+    }
     
     if (validator.type === 'websocket-tunnel' && validator.ws) {
       // WebSocket 터널을 통한 요청 전달
-      console.log(`📡 WebSocket 터널을 통한 요청 전달: ${method} ${path}`);
+      if (isImportantRequest) {
+        console.log(`📡 WebSocket 터널을 통한 요청 전달: ${method} ${path}`);
+      }
       return await forwardThroughTunnel(validator.ws, requestData);
     } else {
       // 기존 HTTP 직접 요청 (폴백)
-      console.log(`📡 HTTP 직접 요청 전달: ${method} ${path} → ${validator.endpoint}`);
+      if (isImportantRequest) {
+        console.log(`📡 HTTP 직접 요청 전달: ${method} ${path} → ${validator.endpoint}`);
+      }
       const validatorUrl = validator.endpoint;
       
       // 쿼리 파라미터 구성
@@ -471,7 +567,17 @@ async function forwardThroughTunnel(tunnelWs, requestData) {
     
     try {
       tunnelWs.send(JSON.stringify(tunnelMessage));
-      console.log(`📡 터널로 요청 전달: ${method} ${path} (${requestId})`);
+      
+      // 중요한 요청만 로그 출력
+      const isImportantRequest = method === 'POST' || 
+                                path.includes('/login') || 
+                                path.includes('/register') || 
+                                path.includes('/transfer') || 
+                                path.includes('/repository');
+      
+      if (isImportantRequest) {
+        console.log(`📡 터널로 요청 전달: ${method} ${path} (${requestId})`);
+      }
     } catch (error) {
       clearTimeout(timeout);
       pendingRequests.delete(requestId);
@@ -514,6 +620,7 @@ app.post('/api/block-propagation', (req, res) => {
   
   if (type === 'block_propagation' && block) {
     console.log(`📦 블록 #${block.index} 전파 수신 (검증자: ${validatorDID?.substring(0, 8)}...)`);
+    console.log(`🔍 현재 연결 상태: WebSocket 클라이언트 ${wss.clients.size}개, 검증자 ${connectedValidator ? '연결됨' : '연결안됨'}`);
     
     // 연결된 모든 WebSocket 클라이언트들에게 블록 전파
     const blockMessage = {
@@ -526,24 +633,136 @@ app.post('/api/block-propagation', (req, res) => {
     };
     
     let connectedCount = 0;
+    
+    // 1. 일반 WebSocket 클라이언트들에게 전파
     wss.clients.forEach(client => {
       if (client.readyState === WebSocket.OPEN) {
         try {
           client.send(JSON.stringify(blockMessage));
           connectedCount++;
         } catch (error) {
-          console.warn('⚠️ 블록 전파 실패:', error.message);
+          console.warn('⚠️ 블록 전파 실패 (클라이언트):', error.message);
         }
       }
     });
     
-    console.log(`📤 블록 #${block.index}을 연결된 ${connectedCount}개 WebSocket 클라이언트에 전파`);
+    // 2. 검증자(풀노드)에게도 블록 전파
+    if (connectedValidator && connectedValidator.ws && connectedValidator.ws.readyState === WebSocket.OPEN) {
+      try {
+        connectedValidator.ws.send(JSON.stringify(blockMessage));
+        connectedCount++;
+        console.log(`📡 검증자에게 블록 #${block.index} 전파 완료`);
+      } catch (error) {
+        console.warn('⚠️ 블록 전파 실패 (검증자):', error.message);
+      }
+    } else {
+      console.log(`⚠️ 검증자가 연결되어 있지 않아 블록 전파 생략`);
+    }
+    
+    console.log(`📤 블록 #${block.index}을 연결된 ${connectedCount}개 WebSocket (클라이언트 + 검증자)에 전파`);
   }
   
   res.json({
     success: true,
     message: '블록 전파 완료'
   });
+});
+
+// 블록 동기화 요청 API
+app.post('/api/block-sync-request', async (req, res) => {
+  try {
+    console.log(`🔄 블록 동기화 API 요청 수신!`);
+    console.log(`📋 요청 body:`, req.body);
+    
+    const { requesterId, sourceRelayUrl, timestamp } = req.body;
+    
+    console.log(`🔍 요청자: ${requesterId} (from: ${sourceRelayUrl})`);
+    console.log(`🔗 연결된 검증자 상태:`, {
+      exists: !!connectedValidator,
+      hasWs: !!connectedValidator?.ws,
+      wsState: connectedValidator?.ws?.readyState,
+      nodeId: connectedValidator?.nodeId
+    });
+    
+    // 연결된 검증자(풀노드)가 있는지 확인
+    if (!connectedValidator || !connectedValidator.ws || connectedValidator.ws.readyState !== WebSocket.OPEN) {
+      console.log('❌ 연결된 검증자가 없어 블록 동기화 요청을 처리할 수 없습니다');
+      return res.status(503).json({
+        success: false,
+        error: '연결된 검증자가 없습니다',
+        blocks: []
+      });
+    }
+    
+    console.log(`📤 검증자에게 블록 동기화 요청 전달: ${requesterId}`);
+    
+    // 검증자에게 블록 동기화 요청 전달하고 응답 대기
+    const syncResponse = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('블록 동기화 요청 시간 초과'));
+      }, 30000); // 30초 타임아웃
+      
+      // 임시 응답 핸들러
+      const responseHandler = (message) => {
+        try {
+          const data = JSON.parse(message);
+          if (data.type === 'block_sync_response' && data.requesterId === requesterId) {
+            clearTimeout(timeout);
+            connectedValidator.ws.removeListener('message', responseHandler);
+            resolve(data);
+          }
+        } catch (error) {
+          // 파싱 오류 무시
+        }
+      };
+      
+      // 응답 핸들러 등록
+      connectedValidator.ws.on('message', responseHandler);
+      
+      // 블록 동기화 요청 전송
+      const syncRequest = {
+        type: 'block_sync_request',
+        requesterId: requesterId,
+        sourceRelayUrl: sourceRelayUrl,
+        timestamp: timestamp
+      };
+      
+      console.log(`📤 검증자에게 WebSocket 메시지 전송:`, syncRequest);
+      connectedValidator.ws.send(JSON.stringify(syncRequest));
+      console.log(`✅ 검증자에게 요청 전송 완료, 응답 대기 중...`);
+    });
+    
+    console.log(`✅ 검증자로부터 블록 동기화 응답 수신: ${syncResponse.blocks?.length || 0}개 블록`);
+    console.log(`📊 응답 데이터:`, {
+      blocksCount: syncResponse.blocks?.length || 0,
+      totalBlocks: syncResponse.totalBlocks,
+      responderId: syncResponse.responderId
+    });
+    
+    const responseData = {
+      success: true,
+      message: '블록 동기화 완료',
+      blocks: syncResponse.blocks || [],
+      totalBlocks: syncResponse.totalBlocks || 0,
+      responderId: syncResponse.responderId || connectedValidator.nodeId
+    };
+    
+    console.log(`📤 HTTP 응답 전송:`, {
+      success: responseData.success,
+      blocksCount: responseData.blocks.length,
+      totalBlocks: responseData.totalBlocks
+    });
+    
+    res.json(responseData);
+    
+  } catch (error) {
+    console.error('❌ 블록 동기화 요청 처리 실패:', error.message);
+    res.status(500).json({
+      success: false,
+      error: '블록 동기화 요청 처리 중 오류가 발생했습니다',
+      blocks: []
+    });
+  }
 });
 
 // 클라이언트들에게 메시지 브로드캐스트
@@ -625,7 +844,17 @@ app.all('/api/*', async (req, res) => {
     
     // 연결된 풀노드로 요청 전달
     const apiPath = req.path.replace('/api', '');
-    console.log(`📡 풀노드로 요청 전달: ${req.method} ${apiPath} → ${connectedValidator.endpoint}`);
+    
+    // 중요한 요청만 로그 출력
+    const isImportantRequest = req.method === 'POST' || 
+                              apiPath.includes('/login') || 
+                              apiPath.includes('/register') || 
+                              apiPath.includes('/transfer') || 
+                              apiPath.includes('/repository');
+    
+    if (isImportantRequest) {
+      console.log(`📡 풀노드로 요청 전달: ${req.method} ${apiPath} → ${connectedValidator.endpoint}`);
+    }
     
     const nodeResponse = await forwardToValidator(connectedValidator, {
       method: req.method,
@@ -665,7 +894,7 @@ wss.on('connection', (ws, req) => {
     tunnelConnection = ws;
     console.log('🔄 WebSocket 터널 연결 설정됨');
     
-    ws.on('message', (message) => {
+    ws.on('message', async (message) => {
       try {
         const data = JSON.parse(message);
         
@@ -701,6 +930,17 @@ wss.on('connection', (ws, req) => {
             pendingRequests.delete(data.requestId);
             resolve(data);
           }
+        } else if (data.type === 'validator_disconnect') {
+          // 검증자 정상 종료 신호
+          console.log(`🔄 검증자 정상 종료 신호 수신: ${data.nodeId} (${data.reason})`);
+          
+          // 검증자 연결 정리
+          if (connectedValidator && connectedValidator.nodeId === data.nodeId) {
+            connectedValidator = null;
+            console.log('✅ 검증자 연결 정리 완료');
+          }
+          
+          // WebSocket 연결 정리는 close 이벤트에서 처리됨
         }
       } catch (error) {
         console.error('❌ 터널 메시지 파싱 오류:', error);
