@@ -56,24 +56,19 @@ class DAO {
   initializeDefaultDAOs() {
     const systemDID = 'did:baekya:system0000000000000000000000000000000001';
 
-
-
-    // Community DAO
+    // Community DAO만 생성 (Development DAO는 제거됨)
     const communityDAO = this.createDAO(systemDID, {
       name: 'Community DAO', 
       purpose: 'Community Management',
       description: '백야 프로토콜 커뮤니티 관리를 담당하는 DAO'
     });
 
-    // CVCM 제거로 DCA 등록 시스템 폐지됨
-
     // 기본 DAO ID들 저장 (이니셜 OP 설정용)
     this.defaultDAOs = {
-      development: developmentDAO,
       community: communityDAO
     };
 
-    console.log(`🏛️ 기본 DAO 초기화 완료: Development, Community`);
+    console.log(`🏛️ 기본 DAO 초기화 완료: Community`);
   }
 
   // CVCM 시스템 제거로 DCA 등록 메서드 폐지됨

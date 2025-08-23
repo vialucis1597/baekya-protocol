@@ -26,13 +26,8 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 const IS_PRODUCTION = NODE_ENV === 'production' || isMainnet;
 
 console.log(`
-🌟 백야 프로토콜 시작
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚙️  환경: ${IS_PRODUCTION ? '메인넷 (PRODUCTION)' : '개발/테스트넷'}
-🔗 네트워크: ${isMainnet ? 'MAINNET' : isTestnet ? 'TESTNET' : 'LOCAL'}
-👤 역할: ${isValidator ? 'VALIDATOR' : 'FULL NODE'}
-📞 통신주소: ${providedAddress || '입력 필요'}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚔️  BROTHERHOOD VALIDATOR START
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━        
 
 🚀 "기여한 만큼 보장받는" 사회규약을 실현하기 위한
 📜 기여기반 탈중앙 사회시스템이 시작됩니다...
@@ -252,6 +247,10 @@ class BaekyaProtocol {
         this.components.storage
       );
 
+      // DAO 시스템 먼저 초기화 (기본 DAO들 생성)
+      console.log('🏛️  기본 DAO들 생성 중...');
+      this.components.dao.initialize();
+
       // 7. 트랜잭션 수수료 시스템
       console.log('💰 트랜잭션 수수료 시스템 초기화...');
       this.components.txFeeSystem = new TransactionFeeSystem();
@@ -264,7 +263,7 @@ class BaekyaProtocol {
       console.log('🤖 자동화 시스템 초기화...');
       this.components.automationSystem = new AutomationSystem(this);
 
-      // 시스템 간 연결 설정
+      // 시스템 간 연결 설정 (DAO 초기화는 이미 완료됨)
       this.setupInterconnections();
       
       // Founder 계정 초기 설정
@@ -281,9 +280,6 @@ class BaekyaProtocol {
   }
 
   setupInterconnections() {
-    // DAO 시스템 초기화 (기본 DAO들 생성)
-    this.components.dao.initialize();
-    
     // 블록체인에 DID 레지스트리 연결
     this.components.blockchain.setDIDRegistry(this.components.didSystem);
     

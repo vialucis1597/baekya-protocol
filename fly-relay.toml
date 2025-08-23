@@ -1,0 +1,36 @@
+# Fly.io app configuration for Baekya Protocol Relay Server
+app = "bprelay2"
+primary_region = "nrt"
+
+[build]
+  dockerfile = "Dockerfile.flyio.relay"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  max_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/api/relay-status"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  RELAY_LOCATION = "37.5665,126.9780"
+  FLY_APP_NAME = "bprelay1"
+
+[deploy]
+  strategy = "rolling"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
+

@@ -1,0 +1,18 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install only production dependencies
+RUN npm install --only=production
+
+# Copy only necessary files for listing server
+COPY listing-server.js ./
+
+# Expose port
+EXPOSE 4000
+
+# Start the listing server
+CMD ["node", "listing-server.js"]

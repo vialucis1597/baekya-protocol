@@ -59,7 +59,9 @@ class Transaction {
       'dca_verification',
       'system_notification',
       'metadata_update',
-      'governance_proposal_creation' // 거버넌스 제안 생성
+      'governance_proposal_creation', // 거버넌스 제안 생성
+      'governance_vote',              // 거버넌스 투표
+      'governance_collaboration_transition' // 거버넌스 협업 단계 전환
     ];
     
     const isZeroAmountAllowed = this.data?.type && 

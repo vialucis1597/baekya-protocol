@@ -3,11 +3,12 @@ const Transaction = require('./Transaction');
 const PoCConsensus = require('./PoCConsensus');
 const P2PNetwork = require('./P2PNetwork');
 
-class BlockchainCore {
-  constructor() {
-    this.dataStorage = null; // 영구 저장소
-    this.chain = []; // 저장소 연결 후에 초기화됨
-    this.difficulty = 2;
+  class BlockchainCore {
+    constructor() {
+      this.dataStorage = null; // 영구 저장소
+      this.authSystem = null; // 인증 시스템 참조
+      this.chain = []; // 저장소 연결 후에 초기화됨
+      this.difficulty = 2;
     this.pendingTransactions = [];
     this.miningReward = 100;
     this.validators = new Map(); // validatorDID -> 등록 정보
@@ -29,6 +30,12 @@ class BlockchainCore {
     console.log('💾 BlockchainCore에 영구 저장소 연결');
     this.dataStorage = storage;
     this.loadChainFromStorage();
+  }
+
+  // 인증 시스템 설정
+  setAuthSystem(authSystem) {
+    console.log('🔐 BlockchainCore에 인증 시스템 연결');
+    this.authSystem = authSystem;
   }
   
   // 저장소에서 블록체인 로드
@@ -417,6 +424,7 @@ class BlockchainCore {
         'github_integration_bonus', // GitHub 연동 보너스
         'governance_proposal_creation', // 거버넌스 제안 생성
         'governance_vote',        // 거버넌스 투표
+        'governance_collaboration_transition', // 거버넌스 협업 단계 전환
         'relay_reward'           // 릴레이 노드 보상
       ];
       
@@ -692,7 +700,7 @@ class BlockchainCore {
         const rewardTransaction = new Transaction(
           'did:baekya:system0000000000000000000000000000000000000000',
           selectedValidator,
-          5,
+          0.25,
           'B-Token',
           { type: 'validator_reward', blockIndex: result.block.index, description: '블록 생성 기여가치 (Validator DAO DCA)' }
         );
@@ -1244,7 +1252,16 @@ class BlockchainCore {
 
       // 트랜잭션 검증
       for (const transaction of block.transactions) {
-        if (!this.isValidTransaction(transaction)) {
+        // Transaction 객체로 복원하여 검증
+        const Transaction = require('./Transaction');
+        let txObj = transaction;
+        
+        // 일반 객체인 경우 Transaction 객체로 변환
+        if (!(transaction instanceof Transaction)) {
+          txObj = Transaction.fromJSON ? Transaction.fromJSON(transaction) : Object.assign(new Transaction(), transaction);
+        }
+        
+        if (!txObj.isValid(this.didRegistry)) {
           return { success: false, error: '유효하지 않은 트랜잭션 포함' };
         }
       }
@@ -1280,23 +1297,109 @@ class BlockchainCore {
       for (const transaction of block.transactions) {
         // 잔액 검증은 이미 했으므로 바로 적용
         this.applyTransaction(transaction);
+        
+        // 거버넌스 제안 생성 트랜잭션 처리
+        if (transaction.data?.type === 'governance_proposal_creation') {
+          this.processGovernanceProposalTransaction(transaction);
+        }
       }
     } catch (error) {
       console.error('❌ 블록 트랜잭션 처리 실패:', error.message);
     }
   }
 
+  // 거버넌스 제안 트랜잭션 처리
+  processGovernanceProposalTransaction(transaction) {
+    try {
+      if (this.dataStorage) {
+        const proposalData = transaction.data;
+        
+        // 사용자명 조회 (기존 시스템과 동일한 방식)
+        let username = 'Unknown';
+        try {
+          // 먼저 storage에서 사용자 정보 조회
+          const userInfo = this.dataStorage.getUserInfo(transaction.fromDID);
+          if (userInfo) {
+            // name을 우선 사용, 없으면 username 사용
+            username = userInfo.name || userInfo.username || 'Unknown';
+          } else {
+            // SimpleAuth에서 DID 정보 조회 시도
+            if (this.authSystem) {
+              const didInfo = this.authSystem.getDIDInfo(transaction.fromDID);
+              if (didInfo.success && didInfo.didData) {
+                // name을 우선 사용, 없으면 username 사용
+                username = didInfo.didData.name || didInfo.didData.username || 'Unknown';
+              }
+            }
+          }
+          console.log(`👤 사용자명 조회 결과: ${transaction.fromDID} → ${username}`);
+        } catch (userError) {
+          console.warn(`⚠️ 사용자명 조회 실패: ${userError.message}`);
+        }
+        
+        // 기존 거버넌스 시스템 형식에 맞춰 제안 객체 생성
+        const proposal = {
+          id: proposalData.proposalId,
+          title: proposalData.title,
+          description: proposalData.description,
+          label: proposalData.label || 'governance',
+          author: {
+            did: transaction.fromDID,
+            username: username
+          },
+          authorDID: transaction.fromDID, // 호환성을 위해 유지
+          status: 'active',
+          votes: { yes: 0, no: 0, abstain: 0 },
+          voters: [],
+          createdAt: transaction.timestamp || Date.now(),
+          lastUpdated: transaction.timestamp || Date.now(),
+          hasStructure: proposalData.hasStructure || false,
+          repositoryUrl: proposalData.repositoryUrl || '',
+          cost: 5, // 기본 비용
+          reports: []
+        };
+        
+        // 기존 거버넌스 시스템 저장 방식 사용
+        this.dataStorage.addGovernanceProposal(proposal);
+        
+        console.log(`✅ 거버넌스 제안 트랜잭션 처리: ${proposalData.title} (ID: ${proposalData.proposalId}) by ${username}`);
+      }
+    } catch (error) {
+      console.error('❌ 거버넌스 제안 트랜잭션 처리 실패:', error.message);
+    }
+  }
+
   // 트랜잭션을 실제 상태에 적용
   applyTransaction(transaction) {
-    if (transaction.fromAddress !== 'did:baekya:system000000000000000000000000000000000') {
+    // 시스템 트랜잭션이 아닌 경우에만 송신자 잔액 차감
+    if (transaction.fromDID && !transaction.fromDID.includes('system') && !transaction.fromDID.includes('genesis')) {
       // 송신자 잔액 차감
-      const fromBalance = this.getBalance(transaction.fromAddress, transaction.tokenType);
-      this.setBalance(transaction.fromAddress, transaction.tokenType, fromBalance - transaction.amount);
+      const fromBalance = this.getBalance(transaction.fromDID, transaction.tokenType);
+      this.setBalance(transaction.fromDID, transaction.tokenType, fromBalance - transaction.amount);
     }
     
-    // 수신자 잔액 증가
-    const toBalance = this.getBalance(transaction.toAddress, transaction.tokenType);
-    this.setBalance(transaction.toAddress, transaction.tokenType, toBalance + transaction.amount);
+    // 수신자 잔액 증가 (시스템 계정이 아닌 경우)
+    if (transaction.toDID && !transaction.toDID.includes('system')) {
+      const toBalance = this.getBalance(transaction.toDID, transaction.tokenType);
+      this.setBalance(transaction.toDID, transaction.tokenType, toBalance + transaction.amount);
+    }
+  }
+
+  // 모든 트랜잭션 조회 (레포지토리용)
+  getAllTransactions() {
+    const allTransactions = [];
+    
+    // 체인의 모든 블록에서 트랜잭션 수집
+    for (const block of this.chain) {
+      if (block.transactions && Array.isArray(block.transactions)) {
+        allTransactions.push(...block.transactions);
+      }
+    }
+    
+    // 대기 중인 트랜잭션도 포함
+    allTransactions.push(...this.pendingTransactions);
+    
+    return allTransactions;
   }
 }
 

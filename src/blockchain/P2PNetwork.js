@@ -914,7 +914,7 @@ class P2PNetwork extends EventEmitter {
   // 메시지 브로드캐스트 (실제 WebSocket 통신)
   broadcast(messageType, data) {
     if (this.peers.size === 0) {
-      console.log('⚠️ 연결된 피어가 없습니다');
+      // 피어가 없는 것은 정상 상황 (블록은 중계서버로 전파됨)
       return { success: false, error: '연결된 피어 없음' };
     }
 

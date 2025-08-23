@@ -1,0 +1,60 @@
+# Listing Server - Only include essential files
+
+# Node modules (will be installed via npm install)
+node_modules
+
+# All other server files except listing-server.js
+server.js
+p2p-relay-server.js
+relay-node-server.js
+mobile-api-server.js
+
+# Android build files (large and unnecessary)
+android/
+Android-SDK/
+*.keystore
+jdk-*/
+*.zip
+
+# Webapp files (not needed for server)
+webapp/
+
+# Source files (not needed for listing server)
+src/
+
+# Data files
+baekya_data/
+*.json.backup
+relay-listing-data.json
+
+# Documentation
+docs/
+*.md
+
+# Test files
+tests/
+*.test.js
+
+# Build artifacts
+build/
+dist/
+
+# Environment and config files
+.env*
+.git
+.gitignore
+.vscode/
+.idea/
+
+# Deployment scripts
+deploy-*.ps1
+deploy-*.sh
+
+# Other Dockerfiles
+Dockerfile*
+!Dockerfile.listing
+
+# Large binary files
+*.tmp
+*.temp
+*.log

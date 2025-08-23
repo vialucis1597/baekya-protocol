@@ -14,7 +14,7 @@ class BrotherhoodDApp {
 const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) && 
   (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
     const localServerUrl = `http://${window.location.hostname}:3000`;
-    this.relayServerUrl = isLocal ? localServerUrl : (window.RELAY_SERVER_URL || 'https://baekya-relay.up.railway.app');
+    this.relayServerUrl = isLocal ? localServerUrl : (window.RELAY_SERVER_URL || 'https://bprelay1.fly.dev');
     this.apiBase = isLocal ? `${localServerUrl}/api` : `${this.relayServerUrl}/api`;
     this.isDecentralized = true;
     
@@ -160,7 +160,6 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
             console.log('✅ BROTHERHOOD DApp 초기화 완료');
   }
 
-  // 최적의 릴레이 서버 찾기
   // LocalTunnel 인증 처리 함수
   async authenticateLocalTunnel(relayUrl) {
     return new Promise((resolve, reject) => {
@@ -206,6 +205,258 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
       
       document.body.appendChild(iframe);
     });
+  }
+
+  isLocalEnvironment() {
+    return window.location.hostname === 'localhost' || 
+           window.location.hostname === '127.0.0.1' ||
+           window.location.hostname.startsWith('192.168.') ||
+           window.location.hostname.startsWith('10.0.');
+  }
+
+  // 리스팅 서버 자동 탐색
+  async discoverListingServer() {
+    console.log('🔍 리스팅 서버 자동 탐색 중...');
+    
+    // Fly.io와 Railway를 번갈아가며 시도
+    for (let i = 1; i <= 10; i++) {
+      // Fly.io 시도
+      const flyUrl = `https://bplisting${i}.fly.dev`;
+      console.log(`   시도 중: ${flyUrl}`);
+      
+      try {
+        const response = await fetch(`${flyUrl}/api/status`, {
+          method: 'GET',
+          timeout: 3000
+        });
+        
+        if (response.ok) {
+          console.log(`✅ 리스팅 서버 발견: ${flyUrl}`);
+          return flyUrl;
+        }
+      } catch (error) {
+        console.log(`   ❌ ${flyUrl} 접속 실패`);
+      }
+      
+      // Railway 시도
+      const railwayUrl = `https://bplisting${i}-production.up.railway.app`;
+      console.log(`   시도 중: ${railwayUrl}`);
+      
+      try {
+        const response = await fetch(`${railwayUrl}/api/status`, {
+          method: 'GET',
+          timeout: 3000
+        });
+        
+        if (response.ok) {
+          console.log(`✅ 리스팅 서버 발견: ${railwayUrl}`);
+          return railwayUrl;
+        }
+      } catch (error) {
+        console.log(`   ❌ ${railwayUrl} 접속 실패`);
+      }
+    }
+    
+    console.log('⚠️ 리스팅 서버를 찾을 수 없습니다');
+    return null;
+  }
+
+  // 중계서버 목록 가져오기
+  async fetchRelayList(listingServerUrl) {
+    try {
+      const response = await fetch(`${listingServerUrl}/api/relay-list`, {
+        method: 'GET',
+        timeout: 5000
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        return data.relays || [];
+      }
+    } catch (error) {
+      console.error('중계서버 목록 가져오기 실패:', error);
+    }
+    return [];
+  }
+
+  // 중계서버 핑 테스트
+  async pingRelay(relayUrl) {
+    const startTime = Date.now();
+    
+    try {
+      // 여러 엔드포인트 시도
+      const endpoints = ['/api/ping', '/api/status', '/health', '/'];
+      let lastError;
+      
+      for (const endpoint of endpoints) {
+        try {
+          const response = await fetch(`${relayUrl}${endpoint}`, {
+            method: 'GET',
+            timeout: 5000
+          });
+          
+          const latency = Date.now() - startTime;
+          
+          if (response.ok) {
+            console.log(`✅ ${relayUrl} 응답 (${endpoint}): ${response.status} - ${latency}ms`);
+            return { latency, status: 'online', url: relayUrl };
+          } else if (response.status === 503) {
+            console.log(`✅ ${relayUrl} 응답 (${endpoint}): 503 - 과부하 상태이지만 사용 가능 - ${latency}ms`);
+            return { latency, status: 'degraded', url: relayUrl };
+          }
+        } catch (error) {
+          lastError = error;
+          continue;
+        }
+      }
+      
+      throw lastError;
+      
+    } catch (error) {
+      const latency = Date.now() - startTime;
+      console.log(`❌ ${relayUrl} 핑 실패: ${error.message} - ${latency}ms`);
+      return { latency: 9999, status: 'offline', url: relayUrl };
+    }
+  }
+
+  // 최적 중계서버 찾기
+  async findOptimalRelay() {
+    this.showRelayOptimizationProgress();
+    
+    try {
+      // 1단계: 리스팅 서버 탐색
+      this.updateRelayOptimizationStep('리스팅 서버 탐색 중...');
+      const listingServerUrl = await this.discoverListingServer();
+      
+      if (!listingServerUrl) {
+        throw new Error('리스팅 서버를 찾을 수 없습니다');
+      }
+      
+      // 2단계: 중계서버 목록 가져오기
+      this.updateRelayOptimizationStep('중계서버 목록 가져오는 중...');
+      const relayList = await this.fetchRelayList(listingServerUrl);
+      
+      if (relayList.length === 0) {
+        throw new Error('사용 가능한 중계서버가 없습니다');
+      }
+      
+      // 3단계: 핑 테스트
+      this.updateRelayOptimizationStep(`${relayList.length}개 중계서버에 핑 테스트 중...`);
+      console.log(`📊 ${relayList.length}개 중계서버에 핑 테스트 중...`);
+      
+      const pingPromises = relayList.map(relay => this.pingRelay(relay.url));
+      const pingResults = await Promise.all(pingPromises);
+      
+      // 온라인이거나 성능 저하 상태인 서버들만 필터링
+      const availableRelays = pingResults.filter(result => 
+        result.status === 'online' || result.status === 'degraded'
+      );
+      
+      if (availableRelays.length === 0) {
+        console.log('⚠️ 온라인 중계서버가 없습니다. 하드코딩된 서버로 폴백합니다.');
+        
+        // 하드코딩된 Railway 서버들로 폴백
+        const fallbackServers = [
+          'https://baekya-relay-production.up.railway.app',
+          'https://baekya-relay-production1.up.railway.app',
+          'https://baekya-relay-production2.up.railway.app'
+        ];
+        
+        this.updateRelayOptimizationStep('폴백 서버 테스트 중...');
+        
+        for (const serverUrl of fallbackServers) {
+          const result = await this.pingRelay(serverUrl);
+          if (result.status === 'online' || result.status === 'degraded') {
+            console.log(`🎯 폴백 서버 선택: ${serverUrl} (${result.latency}ms)`);
+            this.relayServerUrl = serverUrl;
+            this.hideRelayOptimizationProgress();
+            return serverUrl;
+          }
+        }
+        
+        throw new Error('모든 서버가 오프라인입니다');
+      }
+      
+      // 가장 빠른 서버 선택
+      const optimalRelay = availableRelays.reduce((fastest, current) => 
+        current.latency < fastest.latency ? current : fastest
+      );
+      
+      console.log(`🎯 최적 중계서버 선택: ${optimalRelay.url} (${optimalRelay.latency}ms)`);
+      this.relayServerUrl = optimalRelay.url;
+      
+      this.hideRelayOptimizationProgress();
+      return optimalRelay.url;
+      
+    } catch (error) {
+      console.error('❌ 중계서버 최적화 실패:', error);
+      this.hideRelayOptimizationProgress();
+      
+      // 폴백 제거 - 에러를 그대로 던짐
+      throw new Error('사용 가능한 중계서버가 없습니다');
+    }
+  }
+
+  // 중계서버 최적화 진행상황 UI
+  showRelayOptimizationProgress() {
+    const modal = document.getElementById('biometricModal');
+    const content = modal.querySelector('.modal-content');
+    
+    content.innerHTML = `
+      <div class="relay-optimization">
+        <div class="optimization-icon">🔍</div>
+        <h3>최적의 중계서버 탐색 중...</h3>
+        <div class="optimization-status" id="optimizationStatus">
+          서버 탐색을 시작합니다...
+        </div>
+        <div class="optimization-progress">
+          <div class="progress-bar">
+            <div class="progress-fill"></div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  updateRelayOptimizationStep(step) {
+    const statusEl = document.getElementById('optimizationStatus');
+    if (statusEl) {
+      statusEl.textContent = step;
+    }
+    console.log(`🔄 ${step}`);
+  }
+
+  hideRelayOptimizationProgress() {
+    // 최적화 프로세스 완료 - 모달 내용을 원래 상태로 복원
+    console.log('🔄 중계서버 최적화 완료');
+    
+    const modal = document.getElementById('biometricModal');
+    if (modal) {
+      const content = modal.querySelector('.modal-content');
+      if (content) {
+        content.innerHTML = `
+          <div class="modal-header">
+            <h3>아이디 인증 진행 중</h3>
+            <button class="modal-close" onclick="window.dapp.closeBiometricModal()">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="biometric-progress">
+              <div class="step active" id="stepFingerprint">
+                <i class="fas fa-user-check"></i>
+                <span>아이디 확인</span>
+              </div>
+              <div class="step" id="stepComplete">
+                <i class="fas fa-check-circle"></i>
+                <span>완료</span>
+              </div>
+            </div>
+            <div class="progress-message" id="progressMessage">
+              아이디 인증을 시작합니다...
+            </div>
+          </div>
+        `;
+      }
+    }
   }
 
   async getOptimalRelayServer() {
@@ -292,12 +543,8 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
   getFetchOptions(method = 'GET', body = null) {
     const options = {
       method,
-      credentials: 'include', // LocalTunnel 인증 쿠키 포함
       headers: {
-        'Content-Type': 'application/json',
-        'Bypass-Tunnel-Reminder': 'true',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
+        'Content-Type': 'application/json'
       }
     };
     
@@ -397,10 +644,16 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
         // 세션이 종료된 경우가 아니면 재연결 시도
         if (this.isAuthenticated && !this.wsReconnectInterval && !this.sessionTerminated) {
           console.log('🔄 인증된 상태에서 연결 끊김, 재연결 시도 시작');
-          this.wsReconnectInterval = setInterval(() => {
-            console.log('🔄 WebSocket 재연결 시도...');
+          this.wsReconnectInterval = setInterval(async () => {
+            console.log('🔄 중계서버 재탐색 및 WebSocket 재연결 시도...');
             this.updateConnectionStatus('connecting');
-            this.connectWebSocket();
+            
+            try {
+              // 로그인 시처럼 중계서버 목록을 다시 조회해서 최적 서버 선택
+              await this.reconnectToOptimalRelay();
+            } catch (error) {
+              console.error('❌ 재연결 실패:', error);
+            }
           }, 5000);
         } else if (!this.isAuthenticated) {
           console.log('🔐 인증되지 않은 상태에서 연결 종료, 재연결 시도 안함');
@@ -408,6 +661,70 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
       };
     } catch (error) {
       console.error('WebSocket 연결 실패:', error);
+    }
+  }
+
+  // 재연결을 위한 최적 중계서버 선택
+  async reconnectToOptimalRelay() {
+    try {
+      console.log('🔍 재연결을 위한 최적 중계서버 탐색 중...');
+      
+      // 1. 사용 가능한 리스팅 서버 찾기 (로그인 시와 동일한 로직)
+      const listingServerUrl = await this.findAvailableListingServer();
+      
+      if (!listingServerUrl) {
+        throw new Error('사용 가능한 리스팅 서버를 찾을 수 없습니다');
+      }
+      
+      console.log(`📡 재연결용 리스팅 서버 선택: ${listingServerUrl}`);
+      
+      // 2. 리스팅 서버에서 중계서버 목록 가져오기
+      const relayListData = await this.fetchRelayList(listingServerUrl);
+      
+      if (!relayListData || relayListData.length === 0) {
+        throw new Error('사용 가능한 중계서버 목록을 가져올 수 없습니다');
+      }
+      
+      console.log(`📊 중계서버 ${relayListData.length}개 발견`);
+      
+      // 3. 지역 기반 최적 릴레이 선택 (사용자 위치가 있는 경우)
+      let optimalRelay;
+      if (this.userCoordinates) {
+        optimalRelay = await this.selectOptimalRelayByLocation(relayListData);
+      } else {
+        // 위치 정보가 없으면 첫 번째 온라인 서버 사용
+        optimalRelay = relayListData.find(relay => relay.status !== 'offline') || relayListData[0];
+      }
+      
+      if (!optimalRelay) {
+        throw new Error('사용 가능한 중계서버가 없습니다');
+      }
+      
+      console.log(`🎯 재연결용 최적 중계서버 선택: ${optimalRelay.url}`);
+      
+      // 4. 새로운 중계서버 URL 설정
+      const oldRelayUrl = this.relayServerUrl;
+      this.relayServerUrl = optimalRelay.url;
+      this.apiBase = `${optimalRelay.url}/api`;
+      
+      // 5. WebSocket 재연결 시도
+      this.connectWebSocket();
+      
+      // 6. 연결 성공하면 재연결 인터벌 정리
+      setTimeout(() => {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          console.log('✅ 재연결 성공 - 재연결 시도 중단');
+          if (this.wsReconnectInterval) {
+            clearInterval(this.wsReconnectInterval);
+            this.wsReconnectInterval = null;
+          }
+        }
+      }, 2000);
+      
+    } catch (error) {
+      console.error('❌ 최적 중계서버 재연결 실패:', error);
+      // 실패하면 기존 connectWebSocket 방식으로 폴백
+      this.connectWebSocket();
     }
   }
   
@@ -460,10 +777,169 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
     return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
-  // WebSocket 메시지 처리
-  handleWebSocketMessage(data) {
-    switch (data.type) {
-      case 'user_connected':
+  // 레포지토리 URL 복사 전용 함수
+  async copyRepositoryUrl(url, repoId) {
+    console.log('📋 레포지토리 URL 복사 시도:', url, 'ID:', repoId);
+    
+    try {
+      // 클립보드에 복사
+      await navigator.clipboard.writeText(url);
+      console.log('✅ 클립보드 복사 성공');
+      
+      // 버튼 찾기
+      const button = document.getElementById(`copy-btn-${repoId}`);
+      if (button) {
+        const originalHTML = button.innerHTML;
+        
+        // 성공 상태로 변경
+        button.innerHTML = '<i class="fas fa-check"></i> 복사됨!';
+        button.style.background = '#28a745';
+        
+        // 2초 후 복원
+        setTimeout(() => {
+          button.innerHTML = originalHTML;
+          button.style.background = 'var(--primary-color, #007bff)';
+        }, 2000);
+      }
+      
+    } catch (error) {
+      console.error('❌ 클립보드 복사 실패:', error);
+      
+      // fallback 방식 시도
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = url;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        const success = document.execCommand('copy');
+        textArea.remove();
+        
+        if (success) {
+          console.log('✅ fallback 방식으로 복사 성공');
+          
+          const button = document.getElementById(`copy-btn-${repoId}`);
+          if (button) {
+            const originalHTML = button.innerHTML;
+            button.innerHTML = '<i class="fas fa-check"></i> 복사됨!';
+            button.style.background = '#28a745';
+            
+            setTimeout(() => {
+              button.innerHTML = originalHTML;
+              button.style.background = 'var(--primary-color, #007bff)';
+            }, 2000);
+          }
+        } else {
+          throw new Error('fallback copy failed');
+        }
+      } catch (fallbackError) {
+        console.error('❌ fallback 복사도 실패:', fallbackError);
+        
+        const button = document.getElementById(`copy-btn-${repoId}`);
+        if (button) {
+          const originalHTML = button.innerHTML;
+          button.innerHTML = '<i class="fas fa-times"></i> 실패';
+          button.style.background = '#dc3545';
+          
+          setTimeout(() => {
+            button.innerHTML = originalHTML;
+            button.style.background = 'var(--primary-color, #007bff)';
+          }, 2000);
+        }
+        
+        // 수동 복사 안내
+        alert(`복사 실패! 수동으로 복사하세요:\n${url}`);
+      }
+    }
+  }
+
+  // URL 복사 기능 (기존 - 다른 곳에서 사용)
+  async copyToClipboard(text, buttonElementOrLabel) {
+    console.log('🔄 복사 시도:', text, buttonElementOrLabel);
+    
+    try {
+      // 클립보드 복사
+      if (navigator.clipboard && window.isSecureContext) {
+        console.log('📋 navigator.clipboard 사용');
+        await navigator.clipboard.writeText(text);
+      } else {
+        console.log('📋 fallback 방식 사용');
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        const success = document.execCommand('copy');
+        textArea.remove();
+        
+        if (!success) {
+          throw new Error('document.execCommand failed');
+        }
+      }
+      
+      console.log('✅ 클립보드 복사 성공');
+      
+      // 두 번째 매개변수가 DOM 엘리먼트인지 확인
+      if (buttonElementOrLabel && typeof buttonElementOrLabel === 'object' && buttonElementOrLabel.nodeType === 1) {
+        console.log('🎨 버튼 상태 변경 시작');
+        const buttonElement = buttonElementOrLabel;
+        const originalHTML = buttonElement.innerHTML;
+        const originalBackground = buttonElement.style.background || 'var(--primary-color, #007bff)';
+        
+        // 성공 상태로 변경
+        buttonElement.innerHTML = '<i class="fas fa-check"></i> 복사됨!';
+        buttonElement.style.background = '#28a745';
+        
+        setTimeout(() => {
+          buttonElement.innerHTML = originalHTML;
+          buttonElement.style.background = originalBackground;
+          console.log('🎨 버튼 상태 복원 완료');
+        }, 2000);
+      } else {
+        console.log('📢 일반 로그 표시');
+        const label = typeof buttonElementOrLabel === 'string' ? buttonElementOrLabel : 'URL';
+        console.log(`✅ ${label} 복사 완료:`, text);
+      }
+      
+    } catch (error) {
+      console.error('❌ 복사 실패:', error);
+      
+      // DOM 엘리먼트인 경우 실패 표시
+      if (buttonElementOrLabel && typeof buttonElementOrLabel === 'object' && buttonElementOrLabel.nodeType === 1) {
+        const buttonElement = buttonElementOrLabel;
+        const originalHTML = buttonElement.innerHTML;
+        const originalBackground = buttonElement.style.background || 'var(--primary-color, #007bff)';
+        
+        buttonElement.innerHTML = '<i class="fas fa-times"></i> 실패';
+        buttonElement.style.background = '#dc3545';
+        
+        setTimeout(() => {
+          buttonElement.innerHTML = originalHTML;
+          buttonElement.style.background = originalBackground;
+        }, 2000);
+      }
+      
+      // 사용자에게 알림
+      alert('복사에 실패했습니다. 수동으로 선택하여 복사해주세요.');
+    }
+  }
+
+     // WebSocket 메시지 처리
+   handleWebSocketMessage(data) {
+     // 💰 모든 WebSocket 메시지 수신 시 지갑 강제 새로고침
+     if (this.isAuthenticated && this.currentUser) {
+       this.updateTokenBalances(true);
+     }
+     
+     switch (data.type) {
+       case 'user_connected':
         // 릴레이 서버가 풀노드를 할당함
         console.log('✅ 풀노드 할당됨:', data.assignedNode);
         this.assignedNode = data.assignedNode;
@@ -498,9 +974,27 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
         this.handleSessionTermination(data.reason);
         break;
         
+      case 'server_shutdown':
+        // 서버 종료 신호
+        console.log('🔄 서버 종료 신호 수신:', data.message);
+        this.updateConnectionStatus('disconnected');
+        this.disconnectWebSocket();
+        
+        // 사용자에게 알림
+        if (data.message) {
+          alert('서버가 재시작됩니다. 잠시 후 페이지를 새로고침해주세요.');
+        }
+        break;
+        
       case 'state_update':
         // 상태 업데이트
         console.log('📊 상태 업데이트 수신:', data.timestamp);
+        this.handleStateUpdate(data);
+        break;
+        
+      case 'wallet_update':
+        // 투표 비용 차감 등 실시간 잔액 업데이트
+        console.log('💰 지갑 업데이트 수신:', data.message);
         this.handleStateUpdate(data);
         break;
         
@@ -620,7 +1114,8 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
           console.log('✅ 내 지갑 업데이트 적용:', data.wallet.balances);
           
           // 토큰 잔액 UI 업데이트
-          this.updateTokenBalances(data.wallet.balances);
+          // 지갑 정보 강제 새로고침
+          this.updateTokenBalances(true);
           
           // 블록 생성 보상 알림
           if (data.newBlock && data.newBlock.validator === this.currentUser.did) {
@@ -842,9 +1337,9 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
   handleStateUpdate(data) {
     console.log('📊 상태 업데이트:', data);
     
-    // 지갑 정보 업데이트
-    if (data.wallet && data.wallet.balances) {
-      const walletData = data.wallet;
+    // 지갑 정보 업데이트 (wallet 또는 wallet_update 타입)
+    if ((data.wallet && data.wallet.balances) || (data.type === 'wallet_update' && data.balances)) {
+      const walletData = data.wallet || data;
       
       // B-토큰 잔액 업데이트
         const bTokenAmount = walletData.balances.bToken || 0;
@@ -872,8 +1367,8 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
         localStorage.setItem('baekya_auth', JSON.stringify(this.currentUser));
       }
         
-        // UI 업데이트
-        this.updateTokenBalances();
+        // UI 업데이트 (웹소켓 메시지 수신마다 자동 새로고침)
+        this.updateTokenBalances(true);
       
       // 실제 잔액 변경이 있을 때만 알림 표시
       if (bTokenAmount !== prevBTokenAmount || pTokenAmount !== prevPTokenAmount) {
@@ -885,6 +1380,11 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
           if (changeB > 0) message += `\nB-Token: +${changeB}`;
           if (changeP > 0) message += `\nP-Token: +${changeP}`;
           this.showSuccessMessage(message);
+        } else if (changeB < 0) {
+          // 투표 비용 차감 등 특별한 메시지가 있으면 표시
+          if (walletData.message) {
+            this.showSuccessMessage(walletData.message);
+          }
         }
       }
     }
@@ -1416,16 +1916,39 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
 
   // 아이디 인증 관련 메서드
   async startUserAuth() {
-    console.log('🔐 아이디 인증 시작...');
+    console.log('🔐 사용자 인증 시작...');
     
     const modal = document.getElementById('biometricModal');
+    if (!modal) {
+      console.error('❌ biometricModal 요소를 찾을 수 없습니다');
+      this.showErrorMessage('모달 요소를 찾을 수 없습니다. 페이지를 새로고침해주세요.');
+      return;
+    }
     
     // 기존 모달 내용 초기화
     this.resetBiometricModal();
     
     modal.classList.add('active');
     
+    // 모달이 완전히 활성화될 때까지 잠시 대기
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
     try {
+      // 로컬 환경이 아닌 경우 중계서버 최적화 먼저 실행
+      if (!this.isLocalEnvironment()) {
+        console.log('🌐 원격 환경 - 중계서버 최적화 시작');
+        try {
+          await this.findOptimalRelay();
+        } catch (relayError) {
+          console.error('❌ 중계서버 연결 실패:', relayError);
+          this.showErrorMessage('사용 가능한 중계서버가 없습니다. 네트워크 연결을 확인하고 다시 시도해주세요.');
+          this.closeBiometricModal();
+          return;
+        }
+      } else {
+        console.log('🏠 로컬 환경 - 직접 연결 모드');
+      }
+      
       // 로그인/회원가입 선택 화면 표시
       const authMode = await this.showAuthModeSelection();
       
@@ -1470,13 +1993,16 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
   resetBiometricModal() {
     const modalBody = document.querySelector('#biometricModal .modal-body');
     
-    // 동적으로 추가된 모든 요소 제거
-    const dynamicElements = modalBody.querySelectorAll('.password-setup, .invite-code-setup, .personal-info-setup, .user-id-setup, .auth-mode-selection');
-    dynamicElements.forEach(element => element.remove());
-    
-    // 모든 step 초기화
-    const steps = document.querySelectorAll('.step');
-    steps.forEach(step => step.classList.remove('active'));
+    // modalBody가 존재할 때만 처리
+    if (modalBody) {
+      // 동적으로 추가된 모든 요소 제거
+      const dynamicElements = modalBody.querySelectorAll('.password-setup, .invite-code-setup, .personal-info-setup, .user-id-setup, .auth-mode-selection');
+      dynamicElements.forEach(element => element.remove());
+      
+      // 모든 step 초기화
+      const steps = document.querySelectorAll('.step');
+      steps.forEach(step => step.classList.remove('active'));
+    }
     
     // 첫 번째 step 활성화
     const stepFingerprint = document.getElementById('stepFingerprint');
@@ -1493,7 +2019,10 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
       const progressMessage = document.getElementById('progressMessage');
       const modalBody = document.querySelector('#biometricModal .modal-body');
       
-              progressMessage.textContent = 'BROTHERHOOD에 오신 것을 환영합니다!';
+      // progressMessage가 존재할 때만 설정
+      if (progressMessage) {
+        progressMessage.textContent = 'BROTHERHOOD에 오신 것을 환영합니다!';
+      }
       
       // 선택 UI 추가
       const authSelection = document.createElement('div');
@@ -1522,20 +2051,27 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
         </div>
       `;
       
-      modalBody.appendChild(authSelection);
+      // modalBody가 존재할 때만 추가
+      if (modalBody) {
+        modalBody.appendChild(authSelection);
+      }
       
       const loginBtn = document.getElementById('selectLoginBtn');
       const registerBtn = document.getElementById('selectRegisterBtn');
       
-      loginBtn.addEventListener('click', () => {
-        authSelection.remove();
-        resolve('login');
-      });
+      if (loginBtn) {
+        loginBtn.addEventListener('click', () => {
+          authSelection.remove();
+          resolve('login');
+        });
+      }
       
-      registerBtn.addEventListener('click', () => {
-        authSelection.remove();
-        resolve('register');
-      });
+      if (registerBtn) {
+        registerBtn.addEventListener('click', () => {
+          authSelection.remove();
+          resolve('register');
+        });
+      }
     });
   }
 
@@ -1545,7 +2081,10 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
       const progressMessage = document.getElementById('progressMessage');
       const modalBody = document.querySelector('#biometricModal .modal-body');
       
-      progressMessage.textContent = '로그인 정보를 입력해주세요...';
+      // progressMessage 안전 체크
+      if (progressMessage) {
+        progressMessage.textContent = '로그인 정보를 입력해주세요...';
+      }
       
       // 로그인 UI 추가
       const loginSetup = document.createElement('div');
@@ -1568,24 +2107,30 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
         </div>
       `;
       
-      modalBody.appendChild(loginSetup);
+      // modalBody 안전 체크
+      if (modalBody) {
+        modalBody.appendChild(loginSetup);
+      }
       
       const loginBtn = document.getElementById('loginBtn');
       const userIdInput = document.getElementById('loginUserId');
       const passwordInput = document.getElementById('loginPassword');
       
-      // 엔터키 이벤트
+      // 엔터키 이벤트 - 안전 체크
       [userIdInput, passwordInput].forEach(input => {
-        input.addEventListener('keypress', (e) => {
-          if (e.key === 'Enter') {
-            loginBtn.click();
-          }
-        });
+        if (input && loginBtn) {
+          input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+              loginBtn.click();
+            }
+          });
+        }
       });
       
-      loginBtn.addEventListener('click', async () => {
-        const userId = userIdInput.value.trim();
-        const password = passwordInput.value;
+      if (loginBtn && userIdInput && passwordInput) {
+        loginBtn.addEventListener('click', async () => {
+          const userId = userIdInput.value.trim();
+          const password = passwordInput.value;
         
         if (!userId) {
           alert('아이디를 입력해주세요.');
@@ -1604,20 +2149,17 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
         }
         
         try {
-          // 새로운 릴레이 시스템을 통한 로그인
-          const apiBase = await this.getOptimalRelayServer();
-          console.log('🔗 사용할 릴레이 서버:', apiBase);
+          // 이미 최적화된 중계서버 사용
+          const apiBase = this.relayServerUrl;
+          console.log('🔗 사용할 중계서버:', apiBase);
           
           // 서버 API로 로그인 요청
           const deviceUUID = window.deviceUUIDManager.getDeviceUUID();
           const response = await fetch(`${apiBase}/api/login`, {
             method: 'POST',
-            credentials: 'include', // LocalTunnel 인증 쿠키 포함
             headers: {
               'Content-Type': 'application/json',
-              'X-Device-UUID': deviceUUID,
-              'Bypass-Tunnel-Reminder': 'true',
-              'Cache-Control': 'no-cache'
+              'X-Device-UUID': deviceUUID
             },
             body: JSON.stringify({
               username: userId,
@@ -1772,7 +2314,8 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
           passwordInput.value = '';
           passwordInput.focus();
         }
-      });
+        });
+      }
     });
   }
 
@@ -2181,11 +2724,8 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
       // 서버 API 호출 (LocalTunnel 인증 포함)
       const response = await fetch(`${this.apiBase}/check-userid`, {
         method: 'POST',
-        credentials: 'include', // LocalTunnel 인증 쿠키 포함
         headers: { 
-          'Content-Type': 'application/json',
-          'Bypass-Tunnel-Reminder': 'true',
-          'Cache-Control': 'no-cache'
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ userId })
       });
@@ -2595,11 +3135,8 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
       // 서버 API 호출 시뮬레이션 (LocalTunnel 인증 포함)
       const response = await fetch(`${this.apiBase}/check-biometric`, {
         method: 'POST',
-        credentials: 'include', // LocalTunnel 인증 쿠키 포함
         headers: {
-          'Content-Type': 'application/json',
-          'Bypass-Tunnel-Reminder': 'true',
-          'Cache-Control': 'no-cache'
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           fingerprintHash: fingerprintHash
@@ -3052,9 +3589,9 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
         throw new Error('디바이스 초기화가 완료되지 않았습니다. 잠시 후 다시 시도해주세요.');
       }
 
-      // 릴레이 서버 선택 (로그인과 동일한 프로세스)
-      const apiBase = await this.getOptimalRelayServer();
-      console.log('🔗 회원가입용 릴레이 서버:', apiBase);
+      // 이미 최적화된 중계서버 사용 (로그인과 동일한 프로세스)
+      const apiBase = this.relayServerUrl;
+      console.log('🔗 회원가입용 중계서버:', apiBase);
 
       // 아이디/비밀번호 데이터를 기반으로 DID 생성 요청 (새로운 SimpleAuth API)
       const userData = {
@@ -3073,12 +3610,9 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
 
       const response = await fetch(`${apiBase}/api/register`, {
         method: 'POST',
-        credentials: 'include', // LocalTunnel 인증 쿠키 포함
         headers: {
           'Content-Type': 'application/json',
-          'X-Device-UUID': userData.deviceUUID,
-          'Bypass-Tunnel-Reminder': 'true',
-          'Cache-Control': 'no-cache'
+          'X-Device-UUID': userData.deviceUUID
         },
         body: JSON.stringify({ userData })
       });
@@ -3372,12 +3906,18 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
 
   closeBiometricModal() {
     const modal = document.getElementById('biometricModal');
-    modal.classList.remove('active');
-    
-    // 상태 리셋
-    const steps = document.querySelectorAll('.step');
-    steps.forEach(step => step.classList.remove('active'));
-    document.getElementById('stepFingerprint').classList.add('active');
+    if (modal) {
+      modal.classList.remove('active');
+      
+      // 상태 리셋
+      const steps = document.querySelectorAll('.step');
+      steps.forEach(step => step.classList.remove('active'));
+      
+      const stepFingerprint = document.getElementById('stepFingerprint');
+      if (stepFingerprint) {
+        stepFingerprint.classList.add('active');
+      }
+    }
   }
 
   updateUserInterface() {
@@ -3966,10 +4506,8 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
         if (!savedPoolAmount || !localStorage.getItem('baekya_dao_treasuries')) {
           try {
             const stateResponse = await fetch(`${this.apiBase}/protocol-state`, {
-              credentials: 'include',
               headers: {
-                'Bypass-Tunnel-Reminder': 'true',
-                'Cache-Control': 'no-cache'
+                'Content-Type': 'application/json'
               }
             });
             if (stateResponse.ok) {
@@ -4290,12 +4828,22 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
         transactionHistorySection.style.display = 'block';
       }
       
-      await this.updateTokenBalances();
+      await this.updateTokenBalances(true); // 강제 새로고침
       this.updateAddressDisplay();
       this.setupTransferForm();
       
       // 기여 데이터 로드
       this.loadUserContributions();
+      
+      // 30초마다 지갑 정보 자동 갱신
+      if (this.walletRefreshInterval) {
+        clearInterval(this.walletRefreshInterval);
+      }
+      this.walletRefreshInterval = setInterval(() => {
+        if (this.isAuthenticated && this.currentUser) {
+          this.updateTokenBalances(true);
+        }
+      }, 30000);
       
       // BMR 시스템 제거로 해당 코드 삭제
     }
@@ -4371,12 +4919,9 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
       // 서버 API 호출 (LocalTunnel 인증 포함)
       const response = await fetch(`${this.apiBase}/transfer`, {
         method: 'POST',
-        credentials: 'include', // LocalTunnel 인증 쿠키 포함
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.sessionId}`,
-          'Bypass-Tunnel-Reminder': 'true',
-          'Cache-Control': 'no-cache'
+          'Authorization': `Bearer ${this.sessionId}`
         },
         body: JSON.stringify({
           fromDID: this.currentUser.did,
@@ -5285,43 +5830,29 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
   // 새로운 영구 초대코드 생성 및 블록체인 저장
   async createPermanentInviteCode() {
     try {
-             // WebSocket을 통해 초대코드 생성 요청
-       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-         return new Promise((resolve, reject) => {
-           // 응답 대기를 위한 임시 핸들러
-           const tempHandler = (event) => {
-             const data = JSON.parse(event.data);
-             if (data.type === 'invite_code_response') {
-               this.ws.removeEventListener('message', tempHandler);
-               if (data.success) {
-                 console.log('새로운 초대코드가 블록체인에 저장되었습니다:', data.inviteCode);
-                 resolve(data.inviteCode);
-               } else {
-                 reject(new Error(data.error || '초대코드 생성 실패'));
-               }
-             }
-           };
-           
-           this.ws.addEventListener('message', tempHandler);
-           
-           // 초대코드 생성 요청 전송
-           this.ws.send(JSON.stringify({
-             type: 'create_invite_code',
-             userDID: this.currentUser?.did,
-             communicationAddress: this.currentUser?.communicationAddress
-           }));
-           
-           console.log('📤 초대코드 생성 요청 전송:', this.currentUser?.did);
-           
-           // 10초 타임아웃
-           setTimeout(() => {
-             this.ws.removeEventListener('message', tempHandler);
-             reject(new Error('초대코드 생성 타임아웃'));
-           }, 10000);
-         });
-       } else {
-         throw new Error('WebSocket 연결 없음');
-       }
+      // HTTP API를 통해 초대코드 생성 요청
+      console.log('📤 초대코드 생성 요청 전송:', this.currentUser?.did);
+      
+      const response = await fetch(`${this.relayServerUrl}/api/invite-code`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Device-UUID': this.deviceUUID
+        },
+        body: JSON.stringify({
+          userDID: this.currentUser?.did,
+          communicationAddress: this.currentUser?.communicationAddress
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        console.log('✅ 새로운 초대코드가 생성되었습니다:', data.inviteCode);
+        return data.inviteCode;
+      } else {
+        throw new Error(data.error || '초대코드 생성 실패');
+      }
     } catch (error) {
       console.error('초대코드 생성 실패:', error);
       // 서버 실패 시 임시 코드 생성
@@ -5437,7 +5968,7 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
         { id: 'dca1', title: '초대 활동', criteria: '초대 받은 사용자가 DID생성', value: '50' }
       ],
       'validator-dao': [
-        { id: 'dca1', title: '블록생성', criteria: '자동검증', value: '5' }
+        { id: 'dca1', title: '블록생성', criteria: '자동검증', value: '0.25' }
       ]
     };
 
@@ -9513,9 +10044,8 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
   // DAO생성제안 제출
   async submitDAOCreationProposal(daoData) {
     // 본인 인증
-    const authConfirmed = await this.requestAuthentication('DAO생성제안 제출');
-    if (!authConfirmed) {
-      throw new Error('인증이 취소되었습니다.');
+    if (!this.isAuthenticated) {
+      throw new Error('로그인이 필요합니다.');
     }
 
     // B-Token 잔액 확인
@@ -9530,8 +10060,27 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
       throw new Error('제안 제출이 취소되었습니다.');
     }
     
-    // 시뮬레이션 지연
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // 실제 서버 API로 DAO 생성 제안 제출
+    const response = await fetch('/governance/proposals', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        title: `DAO 생성: ${daoData.title}`,
+        description: daoData.description,
+        proposerDID: this.currentUser?.did || this.currentUserDID,
+        type: 'dao_creation',
+        fee: proposalFee,
+        data: daoData
+      })
+    });
+
+    const result = await response.json();
+    
+    if (!result.success) {
+      throw new Error(result.error || 'DAO 생성 제안에 실패했습니다.');
+    }
     
     // B-Token 수수료 차감
     const newBBalance = currentBTokens - proposalFee;
@@ -9545,16 +10094,15 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
     
     return {
       success: true,
-      proposalId: `dao-prop-${Date.now()}`,
-      transactionHash: `0x${Math.random().toString(16).substring(2)}`
+      proposalId: result.proposalId,
+      transactionHash: result.transactionHash
     };
   }
 
   async submitProposal(proposalData) {
     // 본인 인증 (지문/얼굴/비밀번호 중 택1)
-    const authConfirmed = await this.requestAuthentication('제안 제출');
-    if (!authConfirmed) {
-      throw new Error('인증이 취소되었습니다.');
+    if (!this.isAuthenticated) {
+      throw new Error('로그인이 필요합니다.');
     }
 
     // B-Token 잔액 확인
@@ -9570,13 +10118,34 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
       throw new Error('제안 제출이 취소되었습니다.');
     }
     
-    // 실제로는 블록체인에 제안을 제출
-    console.log('제안 제출:', proposalData);
+    // 실제 서버 API로 제안 제출
+
+    const response = await fetch('/governance/proposals', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        title: proposalData.title,
+        description: proposalData.description,
+        proposerDID: this.currentUser?.did || this.currentUserDID,
+        type: proposalData.isImpeachment ? 'impeachment' : 'general',
+        fee: proposalFee,
+        data: {
+          stake: proposalData.stake,
+          fundingEndDate: proposalData.fundingEndDate,
+          isImpeachment: proposalData.isImpeachment
+        }
+      })
+    });
+
+    const result = await response.json();
     
-    // 시뮬레이션 지연
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // B-Token 수수료 + 모금액 차감 시뮬레이션
+    if (!result.success) {
+      throw new Error(result.error || '제안 생성에 실패했습니다.');
+    }
+
+    // B-Token 수수료 + 모금액 차감
     const newBBalance = currentBTokens - totalRequired;
     document.getElementById('bTokenBalance').textContent = `${newBBalance.toFixed(3)} B`;
     
@@ -9584,30 +10153,10 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
     const walletBBalance = document.getElementById('walletBTokenBalance');
     if (walletBBalance) walletBBalance.textContent = `${newBBalance.toFixed(3)} B`;
     
-    // 새 제안을 해당 DAO에 추가
-    const targetDAOId = this.getDAOIdFromName(proposalData.dao);
-    if (targetDAOId) {
-      this.addNewProposal(targetDAOId, {
-        id: `${targetDAOId}-prop-${Date.now()}`,
-        title: proposalData.title,
-        description: proposalData.description,
-        proposer: '사용자', // 실제로는 현재 사용자 이름
-        status: 'active',
-        votesFor: 0,
-        votesAgainst: 0,
-        abstentions: 0,
-        votingStartDate: new Date().toISOString().split('T')[0],
-        votingEndDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 2주 후
-        daoName: this.getDAOName(targetDAOId),
-        daoId: targetDAOId,
-        isImpeachment: proposalData.isImpeachment // 탄핵제안 플래그 추가
-      });
-    }
-    
     return {
       success: true,
-      proposalId: `prop-${Date.now()}`,
-      transactionHash: `0x${Math.random().toString(16).substring(2)}`
+      proposalId: result.proposalId,
+      transactionHash: result.transactionHash
     };
   }
 
@@ -9864,11 +10413,8 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
          // 서버 API 호출 (LocalTunnel 인증 포함)
          const response = await fetch(`${this.apiBase}/dao/treasury/sponsor`, {
            method: 'POST',
-           credentials: 'include', // LocalTunnel 인증 쿠키 포함
            headers: { 
-             'Content-Type': 'application/json',
-             'Bypass-Tunnel-Reminder': 'true',
-             'Cache-Control': 'no-cache'
+             'Content-Type': 'application/json'
            },
            body: JSON.stringify({
              sponsorDID: this.currentUser.did,
@@ -20658,12 +21204,9 @@ const isLocal = !(window.Capacitor && window.Capacitor.isNativePlatform()) &&
     try {
       const response = await fetch(`${this.apiBase}/daos`, {
         method: 'POST',
-        credentials: 'include', // LocalTunnel 인증 쿠키 포함
         headers: { 
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.currentUser.did}`,
-          'Bypass-Tunnel-Reminder': 'true',
-          'Cache-Control': 'no-cache'
+          'Authorization': `Bearer ${this.currentUser.did}`
         },
         body: JSON.stringify({
           ...daoData,
@@ -28354,6 +28897,13 @@ class GovernanceManager {
     this.searchQuery = '';
     this.dateSort = 'newest'; // 'newest' or 'oldest'
     this.cachedActiveAccounts = 1; // 기본값 설정
+    
+    // 레포지토리 관련
+    this.selectedFiles = [];
+    this.repositories = [];
+    
+    // 자동 새로고침 타이머
+    this.proposalRefreshTimer = null;
   }
 
   // 거버넌스 탭 로드
@@ -28362,6 +28912,16 @@ class GovernanceManager {
     this.loadProposals();
     // 협업(본투표) 탭도 로드하여 로그인 상태 반영
     this.loadCollaboration();
+    
+    // 자동 새로고침 타이머 설정 (30초마다)
+    if (this.proposalRefreshTimer) {
+      clearInterval(this.proposalRefreshTimer);
+    }
+    this.proposalRefreshTimer = setInterval(() => {
+      if (window.dapp.currentTab === 'governance') {
+        this.loadProposals();
+      }
+    }, 30000); // 30초
   }
 
   // 거버넌스 서브탭 전환
@@ -28391,7 +28951,9 @@ class GovernanceManager {
       case 'completed':
         this.loadCompleted();
         break;
-
+      case 'repository':
+        this.loadRepositories();
+        break;
     }
   }
 
@@ -28423,12 +28985,11 @@ class GovernanceManager {
 
   // 제안 카드 생성
   generateProposalCard(proposal) {
-    const createdDate = new Date(proposal.createdAt).toLocaleDateString('ko-KR');
+    const createdDate = new Date(proposal.createdAt || Date.now()).toLocaleDateString('ko-KR');
     
-    // 제안 데이터 구조에 따라 작성자 정보 추출
-    const authorDID = proposal.authorDID || (typeof proposal.author === 'object' ? proposal.author.did : null);
-    const authorUsername = typeof proposal.author === 'string' ? proposal.author : 
-                          (typeof proposal.author === 'object' ? proposal.author.username : 'Unknown');
+    // 제안자 정보 추출 (통합 거버넌스)
+    const authorDID = proposal.author?.did || proposal.proposerDID;
+    const authorUsername = proposal.author?.username || proposal.author?.name || '제안자';
     
     // 실시간 사용자 정보 가져오기 시도
     let currentUserInfo = authorDID ? this.getCurrentUserInfo(authorDID) : null;
@@ -28437,8 +28998,12 @@ class GovernanceManager {
       `<img src="${currentUserInfo.profilePhoto}" alt="프로필" class="avatar-img">` :
       (displayUsername && displayUsername.length > 0 ? displayUsername.charAt(0).toUpperCase() : '?');
     
+    // 제안 상태 표시
+    const statusText = proposal.status || '검토 중';
+    const statusClass = `status-${proposal.status || 'default'}`;
+    
     return `
-      <div class="proposal-card" data-proposal-id="${proposal.id}" onclick="window.dapp.showGovernanceProposalDetail('${proposal.id}')">
+      <div class="proposal-card ${statusClass}" data-proposal-id="${proposal.id}" onclick="window.dapp.showGovernanceProposalDetail('${proposal.id}')">
         <div class="proposal-card-header">
           <div class="proposal-user-info">
             <div class="proposal-avatar clickable-avatar" 
@@ -28448,12 +29013,12 @@ class GovernanceManager {
               <div class="proposal-username">${displayUsername}</div>
               <div class="proposal-date">${createdDate}</div>
             </div>
-            <div class="proposal-id">#${proposal.id}</div>
+            <div class="proposal-id">#${proposal.id.substring(0, 8)}...</div>
           </div>
           <div class="proposal-meta">
-            <div class="proposal-label ${proposal.label}">
-              <i class="fas ${this.getLabelIcon(proposal.label)}"></i>
-              ${this.getLabelText(proposal.label)}
+            <div class="proposal-label ${proposal.label || 'governance'}">
+              <i class="fas ${this.getLabelIcon(proposal.label || 'governance')}"></i>
+              ${this.getLabelText(proposal.label || 'governance')}
             </div>
             <div class="core-structure-indicator ${proposal.hasStructure ? 'has-structure' : ''}">
               <i class="fas ${proposal.hasStructure ? 'fa-check' : 'fa-times'}"></i>
@@ -28469,12 +29034,14 @@ class GovernanceManager {
               <i class="fas fa-users"></i>
               투표 참여자: ${proposal.voteCount || 0}명
             </div>
-            <div class="proposal-status">${proposal.status || '검토 중'}</div>
+            <div class="proposal-status">${statusText}</div>
           </div>
         </div>
       </div>
     `;
   }
+
+
 
   // 라벨 아이콘 반환
   getLabelIcon(label) {
@@ -28521,7 +29088,18 @@ class GovernanceManager {
     // 폼 초기화
     document.getElementById('createGovernanceProposalForm').reset();
     this.currentUploadedFile = null;
-    document.getElementById('uploadedStructure').style.display = 'none';
+    
+    // 기존 업로드 구조 숨기기 (있는 경우만)
+    const uploadedStructure = document.getElementById('uploadedStructure');
+    if (uploadedStructure) {
+      uploadedStructure.style.display = 'none';
+    }
+    
+    // URL 확인 결과 숨기기
+    const urlVerificationResult = document.getElementById('urlVerificationResult');
+    if (urlVerificationResult) {
+      urlVerificationResult.style.display = 'none';
+    }
   }
 
   // 제안 생성 모달 닫기
@@ -28529,6 +29107,121 @@ class GovernanceManager {
     const modal = document.getElementById('createGovernanceProposalModal');
     modal.classList.remove('active');
     this.currentUploadedFile = null;
+  }
+
+  // 레포지토리 URL 확인
+  async verifyRepositoryUrl() {
+    const urlInput = document.getElementById('repositoryUrl');
+    const verifyBtn = document.querySelector('.verify-btn');
+    const resultDiv = document.getElementById('urlVerificationResult');
+    
+    const url = urlInput.value.trim();
+    if (!url) {
+      alert('URL을 입력해주세요.');
+      return;
+    }
+    
+    // URL 형식 검증
+    try {
+      new URL(url);
+    } catch (error) {
+      this.showUrlVerificationResult(false, '올바른 URL 형식이 아닙니다.');
+      return;
+    }
+    
+    // 확인 버튼 상태 변경
+    verifyBtn.disabled = true;
+    verifyBtn.className = 'verify-btn verifying';
+    verifyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 확인 중...';
+    
+    try {
+      // 웹소켓 터널을 통해 풀노드에 URL 확인 요청
+      const response = await fetch(`${window.dapp.relayServerUrl}/api/verify-repository-url`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Device-UUID': window.dapp.deviceUUID
+        },
+        body: JSON.stringify({
+          ipfsUrl: url,
+          userDID: window.dapp.currentUser?.did
+        })
+      });
+      
+      const result = await response.json();
+      console.log('🔍 URL 확인 응답:', result);
+      console.log('🔍 응답 구조 상세:', JSON.stringify(result, null, 2));
+      
+      // 응답이 래핑된 경우 데이터 추출
+      let actualResult = result;
+      if (result.status === 200 && result.data) {
+        console.log('🔍 래핑된 응답 감지, data 추출:', result.data);
+        actualResult = result.data;
+      }
+      
+      if (actualResult.success && actualResult.verified) {
+        // 확인 성공
+        verifyBtn.className = 'verify-btn verified';
+        verifyBtn.innerHTML = '<i class="fas fa-check"></i> 확인됨';
+        
+        this.showUrlVerificationResult(true, '블록체인에 등록된 유효한 레포지토리입니다.', {
+          repositoryName: actualResult.repositoryName,
+          authorDID: actualResult.authorDID,
+          createdAt: actualResult.createdAt
+        });
+      } else {
+        // 확인 실패
+        verifyBtn.className = 'verify-btn error';
+        verifyBtn.innerHTML = '<i class="fas fa-times"></i> 실패';
+        
+        console.log('❌ 확인 실패 - actualResult:', actualResult);
+        this.showUrlVerificationResult(false, actualResult.error || 'BROTHERHOOD에 등록되지 않은 URL입니다.');
+      }
+      
+    } catch (error) {
+      console.error('❌ URL 확인 실패:', error);
+      verifyBtn.className = 'verify-btn error';
+      verifyBtn.innerHTML = '<i class="fas fa-times"></i> 오류';
+      
+      this.showUrlVerificationResult(false, '서버 연결 오류가 발생했습니다.');
+    }
+    
+    // 3초 후 버튼 상태 복원
+    setTimeout(() => {
+      verifyBtn.disabled = false;
+      verifyBtn.className = 'verify-btn';
+      verifyBtn.innerHTML = '<i class="fas fa-check-circle"></i> 확인';
+    }, 3000);
+  }
+
+  // URL 확인 결과 표시
+  showUrlVerificationResult(success, message, repoInfo = null) {
+    const resultDiv = document.getElementById('urlVerificationResult');
+    
+    if (success) {
+      resultDiv.className = 'url-verification-result success';
+      resultDiv.innerHTML = `
+        <div>
+          <i class="fas fa-check-circle"></i> ${message}
+        </div>
+        ${repoInfo ? `
+          <div class="repo-info">
+            <div><i class="fas fa-folder"></i> <strong>${repoInfo.repositoryName}</strong></div>
+            <div><i class="fas fa-user"></i> 작성자: ${repoInfo.authorDID.substring(0, 8)}...</div>
+            <div><i class="fas fa-calendar"></i> 생성일: ${new Date(repoInfo.createdAt).toLocaleDateString()}</div>
+          </div>
+        ` : ''}
+      `;
+    } else {
+      resultDiv.className = 'url-verification-result error';
+      resultDiv.innerHTML = `
+        <div>
+          <i class="fas fa-exclamation-triangle"></i> ${message}
+        </div>
+      `;
+    }
+    
+    resultDiv.style.display = 'block';
   }
 
   // 코어구조 파일 업로드 처리 (다중 파일 지원)
@@ -28885,9 +29578,18 @@ class GovernanceManager {
 
 
 
-    // 코어구조 파일 업로드 필수 검증
-    if (!this.currentUploadedFiles || this.currentUploadedFiles.length === 0) {
-      alert('코어구조 파일을 업로드해주세요. 제안에는 반드시 코어구조가 포함되어야 합니다.');
+    // 레포지토리 URL 필수 검증
+    const repositoryUrl = document.getElementById('repositoryUrl').value.trim();
+    if (!repositoryUrl) {
+      alert('레포지토리 URL을 입력해주세요. 제안에는 반드시 코어구조가 포함되어야 합니다.');
+      return;
+    }
+    
+    // URL 형식 검증
+    try {
+      new URL(repositoryUrl);
+    } catch (error) {
+      alert('올바른 URL 형식을 입력해주세요.');
       return;
     }
 
@@ -28904,8 +29606,8 @@ class GovernanceManager {
         title: title,
         description: description,
         label: labelSelect.value,
-        hasStructure: !!(this.currentUploadedFiles && this.currentUploadedFiles.length > 0),
-        structureFiles: this.currentUploadedFiles || [],
+        hasStructure: true, // 레포지토리 URL이 있으면 구조가 있다고 간주
+        repositoryUrl: repositoryUrl, // 레포지토리 URL 추가
         cost: 5,
         authorDID: window.dapp.currentUser.did
       };
@@ -29608,11 +30310,8 @@ class GovernanceManager {
     try {
       const response = await fetch(`${window.dapp.apiBase}/governance/proposals/${proposalId}/final-vote`, {
         method: 'POST',
-        credentials: 'include',
         headers: {
-          'Content-Type': 'application/json',
-          'Bypass-Tunnel-Reminder': 'true',
-          'Cache-Control': 'no-cache'
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           voteType: voteType,
@@ -30704,11 +31403,11 @@ module.exports = sampleFunction;`
     label.innerHTML = `<i class="fas ${this.getLabelIcon(proposal.label)}"></i> ${this.getLabelText(proposal.label)}`;
     label.className = `proposal-label ${proposal.label}`;
 
-    // 코어구조 표시
+    // 코어구조 레포지토리 URL 표시
     const structureSection = document.getElementById('proposalDetailStructure');
-    if (proposal.hasStructure && proposal.structureFiles) {
+    if (proposal.hasStructure && proposal.repositoryUrl) {
       structureSection.style.display = 'block';
-      this.displayDetailStructureFiles(proposal.structureFiles);
+      this.displayRepositoryUrl(proposal.repositoryUrl);
     } else {
       structureSection.style.display = 'none';
     }
@@ -30733,6 +31432,46 @@ module.exports = sampleFunction;`
 
     // 모달 표시
     modal.classList.add('active');
+  }
+
+  // 제안 상세보기에서 레포지토리 URL 표시
+  displayRepositoryUrl(repositoryUrl) {
+    const filesList = document.getElementById('detailStructureFiles');
+    const diffPreview = document.getElementById('detailDiffPreview');
+
+    if (!repositoryUrl) {
+      filesList.innerHTML = '<div class="no-files">레포지토리 URL이 없습니다.</div>';
+      if (diffPreview) diffPreview.innerHTML = '';
+      return;
+    }
+
+    filesList.innerHTML = `
+      <div class="repository-url-display">
+        <div class="repo-url-header">
+          <h4><i class="fas fa-code-branch"></i> 코어구조 레포지토리</h4>
+        </div>
+        <div class="repo-url-content">
+          <div class="url-display-container">
+            <div class="url-label">레포지토리 URL:</div>
+            <div class="url-value-container">
+              <a href="${repositoryUrl}" target="_blank" class="repository-url-link">${repositoryUrl}</a>
+              <button class="copy-btn-small" onclick="window.dapp.copyToClipboard('${repositoryUrl}', '레포지토리 URL')" title="URL 복사">
+                <i class="fas fa-copy"></i>
+              </button>
+            </div>
+          </div>
+          <div class="url-info">
+            <i class="fas fa-info-circle"></i>
+            이 URL을 통해 제안된 코어구조를 확인할 수 있습니다.
+          </div>
+        </div>
+      </div>
+    `;
+
+    // diff 미리보기 영역 숨기기
+    if (diffPreview) {
+      diffPreview.style.display = 'none';
+    }
   }
 
   // 상세보기에서 코어구조 파일 표시
@@ -30851,10 +31590,8 @@ module.exports = sampleFunction;`
     
     try {
       const response = await fetch(`${window.dapp.apiBase}/governance/proposals/${proposalId}/vote/${window.dapp.currentUser.did}`, {
-        credentials: 'include',
         headers: {
-          'Bypass-Tunnel-Reminder': 'true',
-          'Cache-Control': 'no-cache'
+          'Content-Type': 'application/json'
         }
       });
       if (response.ok) {
@@ -31115,6 +31852,1296 @@ module.exports = sampleFunction;`
     
     return userProposals;
   }
+
+  // 레포지토리 관련 메서드들 (로컬 전용)
+  async loadRepositories() {
+    try {
+      console.log('🔄 로컬 레포지토리 로딩 시작...');
+      
+      // 로컬 데이터만 로드
+      const localRepositories = JSON.parse(localStorage.getItem('repositories') || '[]');
+      console.log('💾 로컬에서 로드된 레포지토리:', localRepositories.length, '개');
+      
+      // 최신 순으로 정렬
+      localRepositories.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      
+      this.repositories = localRepositories;
+      console.log('📋 최종 레포지토리 목록:', this.repositories.length, '개');
+      
+      this.renderRepositories();
+      console.log('🎨 레포지토리 렌더링 완료');
+      
+    } catch (error) {
+      console.error('❌ 레포지토리 로드 실패:', error);
+      this.repositories = [];
+      this.renderRepositories();
+    }
+  }
+
+  renderRepositories() {
+    const repositoryList = document.getElementById('repositoryList');
+    if (!repositoryList) return;
+
+    if (this.repositories.length === 0) {
+      repositoryList.innerHTML = `
+        <div class="empty-state">
+          <i class="fas fa-folder-open"></i>
+          <h3>레포지토리가 없습니다</h3>
+          <p>첫 번째 레포지토리를 생성해보세요!</p>
+        </div>
+      `;
+      return;
+    }
+
+    repositoryList.innerHTML = this.repositories.map(repo => `
+      <div class="repository-item" onclick="window.dapp.viewRepository('${repo.id}')">
+        <div class="repository-header">
+          <div class="repository-icon">
+            <i class="fas fa-folder"></i>
+          </div>
+          <div class="repository-info">
+            <h3>${repo.name}</h3>
+            <p>${repo.description}</p>
+          </div>
+        </div>
+        <div class="repository-meta">
+          <div class="repository-date">
+            <i class="fas fa-calendar-alt"></i>
+            ${new Date(repo.createdAt).toLocaleDateString()}
+          </div>
+          <div class="repository-files">
+            <i class="fas fa-file"></i>
+            ${repo.fileCount}개 파일
+          </div>
+        </div>
+        ${repo.ipfsUrl ? `
+          <div class="repository-url">
+            <div class="local-storage-notice" style="background: var(--warning-bg, #fff3cd); color: var(--warning-text, #856404); padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 0.9em; border-left: 3px solid var(--warning-border, #ffc107);">
+              <i class="fas fa-info-circle" style="margin-right: 6px;"></i>
+              이 카드는 로컬기기에 저장되므로 URL을 복사하여 따로 보관하세요.
+            </div>
+            
+            <div class="url-section">
+              <strong>메인 URL:</strong>
+              <div class="url-container" style="display: flex; align-items: center; gap: 8px; margin-top: 6px;">
+                <a href="${repo.ipfsUrl}" target="_blank" style="flex: 1; word-break: break-all;">${repo.ipfsUrl}</a>
+                <button class="copy-btn" onclick="event.stopPropagation(); window.dapp.copyRepositoryUrl('${repo.ipfsUrl}', '${repo.id}')" title="URL 복사" style="background: var(--primary-color, #007bff); color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8em; min-width: 60px;" id="copy-btn-${repo.id}">
+                  <i class="fas fa-copy"></i> 복사
+                </button>
+              </div>
+            </div>
+            
+            ${repo.ipfsHash ? `
+              <div class="gateway-section" style="margin-top: 12px;">
+                <strong>대체 게이트웨이:</strong><br>
+                <small style="margin-top: 6px; display: block;">
+                  <a href="https://cloudflare-ipfs.com/ipfs/${repo.ipfsHash}" target="_blank">Cloudflare</a> • 
+                  <a href="https://dweb.link/ipfs/${repo.ipfsHash}" target="_blank">Dweb</a> • 
+                  <a href="https://4everland.io/ipfs/${repo.ipfsHash}" target="_blank">4everland</a>
+                </small>
+              </div>
+            ` : ''}
+            <br>
+            <div class="repository-actions">
+              <button class="btn-primary small" onclick="window.dapp.viewRepository('${repo.ipfsUrl}')">
+                <i class="fas fa-external-link-alt"></i> 보기
+              </button>
+              <button class="btn-secondary small" onclick="window.dapp.downloadRepository('${repo.id}')">
+                <i class="fas fa-download"></i> 가져오기
+              </button>
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    `).join('');
+  }
+
+  // 파일 업로드 모달 표시
+  showUploadModal() {
+    const modal = document.getElementById('uploadModal');
+    if (modal) {
+      modal.style.display = 'flex';
+      // 입력 필드 초기화
+      document.getElementById('repositoryName').value = '';
+      document.getElementById('repositoryDescription').value = '';
+      document.getElementById('selectedFiles').innerHTML = '';
+      this.selectedFiles = [];
+    }
+  }
+
+  // 파일 업로드 모달 닫기
+  closeUploadModal() {
+    const modal = document.getElementById('uploadModal');
+    if (modal) {
+      modal.style.display = 'none';
+    }
+  }
+
+  // 파일 선택 처리
+  handleFileSelection(input) {
+    const files = Array.from(input.files);
+    
+    // 파일에 상대 경로 정보 추가
+    this.selectedFiles = files.map(file => {
+      // webkitRelativePath가 있으면 사용 (폴더 업로드), 없으면 파일명만 사용
+      const path = file.webkitRelativePath || file.name;
+      return {
+        file: file,
+        path: path,
+        name: file.name,
+        size: file.size,
+        type: file.type
+      };
+    });
+    
+    this.renderSelectedFiles();
+  }
+
+  // 선택된 파일 목록 렌더링
+  renderSelectedFiles() {
+    const container = document.getElementById('selectedFiles');
+    if (!container) return;
+
+    if (this.selectedFiles.length === 0) {
+      container.innerHTML = '';
+      return;
+    }
+
+    container.innerHTML = `
+      <div class="selected-files-header">
+        <h4>선택된 파일들 (${this.selectedFiles.length}개)</h4>
+        <button class="btn-secondary small" onclick="window.dapp.clearSelectedFiles()">
+          <i class="fas fa-trash"></i> 전체 삭제
+        </button>
+      </div>
+      ${this.selectedFiles.map((fileObj, index) => `
+        <div class="selected-file-item">
+          <div class="selected-file-info">
+            <div class="selected-file-icon">
+              <i class="fas ${this.getFileIcon(fileObj.path)}"></i>
+            </div>
+            <div class="selected-file-details">
+              <h4>${fileObj.path}</h4>
+              <p>${this.formatFileSize(fileObj.size)} • ${fileObj.type || 'Unknown'}</p>
+            </div>
+          </div>
+          <button class="remove-file-btn" onclick="window.dapp.removeSelectedFile(${index})">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+      `).join('')}
+    `;
+  }
+
+  // 파일 타입에 따른 아이콘 반환
+  getFileIcon(filePath) {
+    const ext = filePath.split('.').pop().toLowerCase();
+    switch (ext) {
+      case 'js': case 'jsx': case 'ts': case 'tsx': return 'fa-file-code';
+      case 'html': case 'htm': return 'fa-file-code';
+      case 'css': case 'scss': case 'sass': return 'fa-file-code';
+      case 'json': case 'xml': return 'fa-file-code';
+      case 'md': case 'txt': return 'fa-file-alt';
+      case 'png': case 'jpg': case 'jpeg': case 'gif': case 'svg': return 'fa-file-image';
+      case 'pdf': return 'fa-file-pdf';
+      case 'zip': case 'rar': case '7z': return 'fa-file-archive';
+      default: return 'fa-file';
+    }
+  }
+
+  // 전체 파일 삭제
+  clearSelectedFiles() {
+    this.selectedFiles = [];
+    this.renderSelectedFiles();
+  }
+
+  // 선택된 파일 제거
+  removeSelectedFile(index) {
+    this.selectedFiles.splice(index, 1);
+    this.renderSelectedFiles();
+  }
+
+  // 파일 크기 포맷
+  formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
+  // 레포지토리 생성
+  async createRepository() {
+    const name = document.getElementById('repositoryName').value;
+    const description = document.getElementById('repositoryDescription').value;
+
+    if (!name) {
+      alert('레포지토리 이름을 입력해주세요.');
+      return;
+    }
+
+    if (this.selectedFiles.length === 0) {
+      alert('최소 하나의 파일을 선택해주세요.');
+      return;
+    }
+
+    try {
+      // 배포 상태 표시
+      this.showDeploymentStatus('deploying');
+
+      // 시스템 구조 파일들 가져오기
+      const systemFiles = await this.getSystemFiles();
+      
+      // 업로드된 파일들과 시스템 파일들을 합친 새 구조 생성
+      const combinedFiles = await this.combineFilesWithSystem(this.selectedFiles, systemFiles);
+
+      // IPFS에 배포
+      const ipfsUrl = await this.deployToIPFS(combinedFiles, name);
+
+      // IPFS 해시 추출
+      const ipfsHash = ipfsUrl.split('/ipfs/')[1];
+      
+      // 레포지토리 데이터 생성
+      const repository = {
+        id: Date.now().toString(),
+        name: name,
+        description: description,
+        fileCount: this.selectedFiles.length,
+        ipfsUrl: ipfsUrl,
+        ipfsHash: ipfsHash,
+        createdAt: new Date().toISOString(),
+        files: this.selectedFiles.map(fileObj => ({
+          name: fileObj.name,
+          path: fileObj.path,
+          size: fileObj.size,
+          type: fileObj.type
+        }))
+      };
+
+       // 로컬 스토리지에 저장
+       this.repositories = this.repositories || [];
+       this.repositories.push(repository);
+       localStorage.setItem('repositories', JSON.stringify(this.repositories));
+       
+       // 블록체인에는 URL만 저장 (백그라운드로 처리)
+       this.createRepositoryUrlTransaction(repository).catch(error => {
+         console.warn('⚠️ 레포지토리 URL 블록체인 저장 실패:', error.message);
+       });
+
+       // UI 업데이트
+       this.renderRepositories();
+       this.closeUploadModal();
+       this.showDeploymentStatus('success', ipfsUrl);
+
+      console.log('레포지토리 생성 완료:', repository);
+
+    } catch (error) {
+      console.error('레포지토리 생성 실패:', error);
+      this.showDeploymentStatus('error', null, error.message);
+    }
+  }
+
+  // 레포지토리 URL만 블록체인에 저장 (WebSocket 터널 방식)
+  async createRepositoryUrlTransaction(repository) {
+    try {
+      console.log('📤 레포지토리 URL 블록체인 저장:', repository.name);
+      
+      // WebSocket 터널을 통해 풀노드와 통신 (초대코드와 동일한 방식)
+      const response = await fetch(`${window.dapp.relayServerUrl}/api/repository-url`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Device-UUID': window.dapp.deviceUUID
+        },
+        body: JSON.stringify({
+          repositoryId: repository.id,
+          name: repository.name,
+          ipfsUrl: repository.ipfsUrl,
+          ipfsHash: repository.ipfsHash,
+          authorDID: window.dapp.currentUser?.did || 'anonymous',
+          createdAt: repository.createdAt
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('✅ 레포지토리 URL 블록체인 저장 완료:', result);
+      } else {
+        throw new Error(`URL 저장 실패: ${response.status}`);
+      }
+
+    } catch (error) {
+      console.error('❌ 레포지토리 URL 블록체인 저장 실패:', error);
+      throw error;
+    }
+  }
+
+
+
+  // 시스템 파일들 가져오기
+  async getSystemFiles() {
+    // 현재 프로젝트의 파일 구조를 가져옴
+    // 실제로는 서버에서 가져와야 하지만, 여기서는 하드코딩된 구조 사용
+    return {
+      'package.json': '{"name": "baekya-protocol", "version": "1.0.0"}',
+      'README.md': '# BROTHERHOOD\n\n분산 네트워크 프로토콜',
+      'src/index.js': 'console.log("BROTHERHOOD 시작");',
+      // 추가적인 시스템 파일들...
+    };
+  }
+
+  // 업로드된 파일과 시스템 파일 합치기
+  async combineFilesWithSystem(uploadedFiles, systemFiles) {
+    // 시스템 파일은 제거하고 업로드된 파일만 사용
+    const combined = {};
+
+    // 업로드된 파일들만 추가
+    for (const fileObj of uploadedFiles) {
+      const content = await this.readFileAsText(fileObj.file);
+      // 파일 경로 그대로 사용 (폴더 구조 유지)
+      combined[fileObj.path] = content;
+    }
+
+    return combined;
+  }
+
+  // 파일을 텍스트로 읽기
+  readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.onerror = reject;
+      reader.readAsText(file);
+    });
+  }
+
+  // IPFS에 배포 (실제 배포)
+  async deployToIPFS(files, projectName) {
+    try {
+      // 1. HTML 페이지 생성
+      const htmlContent = this.generateProjectPage(files, projectName);
+      
+      // 2. 실제 IPFS 배포 방법 선택
+      const deploymentMethod = this.getIPFSDeploymentMethod();
+      
+      // Pinata로만 배포
+      return await this.deployToPinata(htmlContent, projectName);
+    } catch (error) {
+      throw new Error('IPFS 배포 실패: ' + error.message);
+    }
+  }
+
+  // IPFS 배포 방법 결정
+  getIPFSDeploymentMethod() {
+    // Pinata만 사용
+    const savedSettings = JSON.parse(localStorage.getItem('ipfs_settings') || '{}');
+    
+    if (savedSettings.pinataApiKey && savedSettings.pinataSecretKey) {
+      return 'pinata';
+    }
+    
+    // 설정이 불완전하면 에러 발생
+    throw new Error('Pinata API 키가 설정되지 않았습니다. IPFS 설정에서 API 키를 입력해주세요.');
+  }
+
+  // IPFS 설정 모달 표시
+  showIPFSSettingsModal() {
+    const modal = document.getElementById('ipfsSettingsModal');
+    if (modal) {
+      modal.style.display = 'flex';
+      this.loadIPFSSettings();
+    }
+  }
+
+  // IPFS 설정 모달 닫기
+  closeIPFSSettingsModal() {
+    const modal = document.getElementById('ipfsSettingsModal');
+    if (modal) {
+      modal.style.display = 'none';
+    }
+  }
+
+  // IPFS 설정 로드
+  loadIPFSSettings() {
+    const savedSettings = JSON.parse(localStorage.getItem('ipfs_settings') || '{}');
+    
+    // 설정 값들 로드
+    if (savedSettings.pinataApiKey) {
+      document.getElementById('pinataApiKey').value = savedSettings.pinataApiKey;
+    }
+    if (savedSettings.pinataSecretKey) {
+      document.getElementById('pinataSecretKey').value = savedSettings.pinataSecretKey;
+    }
+  }
+
+
+
+  // IPFS 설정 저장
+  saveIPFSSettings() {
+    const settings = {};
+    
+    // Pinata API 키들 수집
+    settings.pinataApiKey = document.getElementById('pinataApiKey').value;
+    settings.pinataSecretKey = document.getElementById('pinataSecretKey').value;
+    
+    if (!settings.pinataApiKey || !settings.pinataSecretKey) {
+      alert('Pinata API 키와 Secret 키를 모두 입력해주세요.');
+      return;
+    }
+    
+    // 설정 저장
+    localStorage.setItem('ipfs_method', 'pinata');
+    localStorage.setItem('ipfs_settings', JSON.stringify(settings));
+    
+    this.closeIPFSSettingsModal();
+    alert('Pinata 설정이 저장되었습니다!');
+  }
+
+  // Pinata API를 통한 배포
+  async deployToPinata(htmlContent, projectName) {
+    const savedSettings = JSON.parse(localStorage.getItem('ipfs_settings') || '{}');
+    const PINATA_API_KEY = savedSettings.pinataApiKey;
+    const PINATA_SECRET_KEY = savedSettings.pinataSecretKey;
+    
+    if (!PINATA_API_KEY || !PINATA_SECRET_KEY) {
+      throw new Error('Pinata API 키가 설정되지 않았습니다. IPFS 설정에서 API 키를 입력해주세요.');
+    }
+
+    const formData = new FormData();
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    formData.append('file', blob, `${projectName}.html`);
+    
+    const metadata = JSON.stringify({
+      name: `${projectName} - Baekya Repository`,
+      keyvalues: {
+        project: projectName,
+        type: 'baekya-repository',
+        created: new Date().toISOString()
+      }
+    });
+    formData.append('pinataMetadata', metadata);
+
+    const response = await fetch('https://api.pinata.cloud/pinning/pinFileToIPFS', {
+      method: 'POST',
+      headers: {
+        'pinata_api_key': PINATA_API_KEY,
+        'pinata_secret_api_key': PINATA_SECRET_KEY
+      },
+      body: formData
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Pinata 업로드 실패: ${error}`);
+    }
+
+    const result = await response.json();
+    
+    // Pinata 게이트웨이는 HTML을 차단하므로 다른 공용 게이트웨이 사용
+    const ipfsHash = result.IpfsHash;
+    
+    // 여러 게이트웨이 중 가장 안정적인 것 선택
+    const gateways = [
+      `https://ipfs.io/ipfs/${ipfsHash}`,
+      `https://cloudflare-ipfs.com/ipfs/${ipfsHash}`,
+      `https://dweb.link/ipfs/${ipfsHash}`,
+      `https://4everland.io/ipfs/${ipfsHash}`
+    ];
+    
+    console.log('✅ Pinata 업로드 완료, IPFS Hash:', ipfsHash);
+    console.log('📋 사용 가능한 게이트웨이들:', gateways);
+    
+    return gateways[0]; // ipfs.io 게이트웨이 사용
+  }
+
+
+
+
+
+  // 프로젝트 페이지 HTML 생성 (GitHub 스타일)
+  generateProjectPage(files, projectName) {
+    // 파일 구조를 트리 형태로 변환
+    const fileTree = this.buildFileTree(files);
+    const fileData = this.generateFileDataScript(files);
+
+    return `
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${projectName} - BROTHERHOOD Repository</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0; 
+            padding: 0; 
+            background: #f6f8fa;
+            color: #24292f;
+        }
+        .header { 
+            background: white; 
+            border-bottom: 1px solid #d0d7de;
+            padding: 16px 20px;
+        }
+        .header h1 { 
+            margin: 0; 
+            font-size: 20px;
+            font-weight: 600;
+            color: #0969da;
+        }
+        .container { 
+            display: flex; 
+            max-width: 1280px; 
+            margin: 20px auto;
+            gap: 20px;
+            min-height: 600px;
+        }
+        .file-tree { 
+            width: 300px; 
+            background: white;
+            border: 1px solid #d0d7de;
+            border-radius: 6px;
+            padding: 16px;
+            height: fit-content;
+        }
+        .tree-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #eaeef2;
+        }
+        .import-mode-btn {
+            background: #0969da;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .import-mode-btn:hover {
+            background: #0860ca;
+        }
+        .download-selected-btn {
+            background: #238636;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .download-selected-btn:disabled {
+            background: #8c959f;
+            cursor: not-allowed;
+        }
+        .cancel-selection-btn {
+            background: #f85149;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+        .tree-controls {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .select-all-btn, .deselect-all-btn {
+            background: #f6f8fa;
+            border: 1px solid #d0d7de;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+            color: #24292f;
+        }
+        .select-all-btn:hover, .deselect-all-btn:hover {
+            background: #f3f4f6;
+        }
+        .file-viewer { 
+            flex: 1; 
+            background: white;
+            border: 1px solid #d0d7de;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .tree-item { 
+            padding: 4px 8px; 
+            border-radius: 4px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 6px;
+        }
+        .tree-item:hover { background: #f3f4f6; }
+        .item-content {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            flex: 1;
+        }
+        .item-content.active { 
+            background: #e7f3ff; 
+            border-radius: 4px;
+            padding: 2px 4px;
+        }
+        .item-content.folder { 
+            font-weight: 500; 
+            color: #0969da;
+        }
+        .item-content.folder:hover {
+            color: #0860ca;
+        }
+        .tree-item i { width: 16px; color: #656d76; }
+        .folder-icon { 
+            color: #54aeff !important;
+            transition: color 0.2s ease;
+        }
+        .item-content.folder:hover .folder-icon {
+            color: #0860ca !important;
+        }
+        .file-checkbox, .folder-checkbox {
+            cursor: pointer;
+            margin-left: 8px;
+        }
+        .tree-item.selection-mode {
+            background: #f6f8fa;
+            border: 1px solid #e1e4e8;
+            margin-bottom: 2px;
+        }
+        .tree-item.selection-mode:hover {
+            background: #e1f5fe;
+        }
+        .tree-children { 
+            margin-left: 20px; 
+            border-left: 1px solid #eaeef2;
+            padding-left: 8px;
+        }
+        .file-content { padding: 20px; }
+        .file-path { 
+            background: #f6f8fa; 
+            padding: 10px 16px; 
+            border-bottom: 1px solid #d0d7de;
+            font-family: monospace;
+            font-size: 12px;
+            color: #656d76;
+        }
+        .code-content { 
+            background: #f6f8fa; 
+            border-radius: 6px;
+            overflow-x: auto;
+        }
+        .code-wrapper {
+            display: flex;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 12px;
+            line-height: 1.45;
+        }
+        .line-numbers {
+            background: #f1f3f4;
+            color: #6e7781;
+            padding: 16px 8px 16px 16px;
+            margin: 0;
+            border-right: 1px solid #d0d7de;
+            text-align: right;
+            user-select: none;
+            min-width: 50px;
+        }
+        .line-numbers .line-number {
+            display: block;
+        }
+        .code-lines {
+            background: #f6f8fa;
+            color: #24292f;
+            padding: 16px;
+            margin: 0;
+            flex: 1;
+            white-space: pre-wrap;
+            overflow-x: auto;
+        }
+        .code-lines .code-line {
+            display: block;
+        }
+        pre { 
+            margin: 0; 
+            font-family: inherit;
+            font-size: inherit; 
+            line-height: inherit;
+        }
+        .placeholder { 
+            text-align: center; 
+            color: #656d76; 
+            padding: 40px;
+        }
+        .meta { 
+            margin: 20px auto; 
+            max-width: 1280px; 
+            padding: 16px 20px; 
+            background: white;
+            border: 1px solid #d0d7de;
+            border-radius: 6px;
+            font-size: 14px;
+            color: #656d76;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><i class="fas fa-folder"></i> ${projectName}</h1>
+        <p style="margin: 8px 0 0 0; color: #656d76; font-size: 14px;">BROTHERHOOD Repository - 분산 프로젝트 저장소</p>
+    </div>
+    
+    <div class="container">
+        <div class="file-tree">
+            <div class="tree-header">
+                <h3 style="margin: 0; font-size: 14px; color: #24292f;">📁 파일 구조</h3>
+                <button class="import-mode-btn" onclick="toggleImportMode()">
+                    <i class="fas fa-download"></i> 가져오기
+                </button>
+            </div>
+            <div class="tree-controls" style="display: none;">
+                <button class="select-all-btn" onclick="selectAll()">전체 선택</button>
+                <button class="deselect-all-btn" onclick="deselectAll()">선택 해제</button>
+                <button class="download-selected-btn" onclick="downloadSelected()" disabled>
+                    <i class="fas fa-download"></i> 다운로드
+                </button>
+                <button class="cancel-selection-btn" onclick="cancelSelection()">취소</button>
+            </div>
+            ${this.renderFileTree(fileTree)}
+        </div>
+        
+        <div class="file-viewer">
+            <div class="file-path" id="filePath">파일을 선택하여 내용을 확인하세요</div>
+            <div class="file-content" id="fileContent">
+                <div class="placeholder">
+                    <i class="fas fa-file-alt" style="font-size: 48px; margin-bottom: 16px; opacity: 0.3;"></i>
+                    <p>왼쪽에서 파일을 클릭하면 내용이 표시됩니다</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="meta">
+        <strong>🌐 IPFS 분산 저장소</strong><br>
+        생성일: ${new Date().toLocaleString('ko-KR')} • 
+        파일 수: ${Object.keys(files).length}개 • 
+        Powered by BROTHERHOOD
+    </div>
+
+    <script>
+        ${fileData}
+        
+        function showFile(filePath) {
+            document.querySelectorAll('.tree-item .item-content').forEach(item => item.classList.remove('active'));
+            event.target.closest('.item-content').classList.add('active');
+            
+            document.getElementById('filePath').textContent = filePath;
+            const content = fileContents[filePath] || '파일을 읽을 수 없습니다.';
+            
+            // 줄번호와 함께 표시
+            const lines = content.split('\\n');
+            const lineNumbers = lines.map((line, index) => 
+                '<span class="line-number">' + (index + 1) + '</span>'
+            ).join('\\n');
+            const codeLines = lines.map(line => 
+                '<span class="code-line">' + escapeHtml(line) + '</span>'
+            ).join('\\n');
+            
+            document.getElementById('fileContent').innerHTML = 
+                '<div class="code-content">' +
+                '<div class="code-wrapper">' +
+                '<pre class="line-numbers">' + lineNumbers + '</pre>' +
+                '<pre class="code-lines">' + codeLines + '</pre>' +
+                '</div>' +
+                '</div>';
+        }
+        
+        function toggleFolder(element) {
+            const folderItem = element.closest('.tree-item');
+            const children = folderItem.nextElementSibling;
+            
+            if (children && children.classList.contains('tree-children')) {
+                const icon = element.querySelector('.folder-icon');
+                const isHidden = children.style.display === 'none';
+                
+                if (isHidden) {
+                    children.style.display = 'block';
+                    icon.className = 'fas fa-folder-open folder-icon';
+                } else {
+                    children.style.display = 'none';
+                    icon.className = 'fas fa-folder folder-icon';
+                }
+            }
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // 가져오기 모드 토글
+        function toggleImportMode() {
+            const treeControls = document.querySelector('.tree-controls');
+            const checkboxes = document.querySelectorAll('.file-checkbox, .folder-checkbox');
+            
+            // 선택 컨트롤 표시
+            treeControls.style.display = 'flex';
+            
+            // 체크박스들 표시
+            checkboxes.forEach(checkbox => {
+                checkbox.style.display = 'inline-block';
+            });
+            
+            // 트리 아이템 스타일 조정
+            document.querySelectorAll('.tree-item').forEach(item => {
+                item.classList.add('selection-mode');
+            });
+        }
+        
+        // 선택 취소
+        function cancelSelection() {
+            const treeControls = document.querySelector('.tree-controls');
+            const checkboxes = document.querySelectorAll('.file-checkbox, .folder-checkbox');
+            
+            // 선택 컨트롤 숨김
+            treeControls.style.display = 'none';
+            
+            // 체크박스들 숨김
+            checkboxes.forEach(checkbox => {
+                checkbox.style.display = 'none';
+                checkbox.checked = false;
+            });
+            
+            // 트리 아이템 스타일 복원
+            document.querySelectorAll('.tree-item').forEach(item => {
+                item.classList.remove('selection-mode');
+            });
+        }
+
+        // 파일 선택 상태 업데이트
+        function updateDownloadButton() {
+            const checkedFiles = document.querySelectorAll('.file-checkbox:checked');
+            const downloadBtn = document.querySelector('.download-selected-btn');
+            downloadBtn.disabled = checkedFiles.length === 0;
+        }
+        
+        // 폴더 선택 처리
+        function handleFolderSelection(folderCheckbox) {
+            const folderItem = folderCheckbox.closest('.tree-item');
+            const treeChildren = folderItem.nextElementSibling;
+            
+            if (treeChildren && treeChildren.classList.contains('tree-children')) {
+                // 폴더가 접혀있으면 먼저 펼치기
+                if (treeChildren.style.display === 'none') {
+                    const folderContent = folderItem.querySelector('.item-content.folder');
+                    if (folderContent) {
+                        toggleFolder(folderContent);
+                    }
+                }
+                
+                const childCheckboxes = treeChildren.querySelectorAll('input[type="checkbox"]');
+                childCheckboxes.forEach(checkbox => {
+                    checkbox.checked = folderCheckbox.checked;
+                });
+            }
+            updateDownloadButton();
+        }
+        
+        // 전체 선택
+        function selectAll() {
+            document.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+                checkbox.checked = true;
+            });
+            updateDownloadButton();
+        }
+        
+        // 선택 해제
+        function deselectAll() {
+            document.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+                checkbox.checked = false;
+            });
+            updateDownloadButton();
+        }
+        
+        // 선택된 파일들 다운로드
+        async function downloadSelected() {
+            const checkedCheckboxes = document.querySelectorAll('input[type="checkbox"]:checked');
+            const selectedPaths = Array.from(checkedCheckboxes).map(cb => cb.dataset.path);
+            
+            if (selectedPaths.length === 0) {
+                alert('다운로드할 파일을 선택해주세요.');
+                return;
+            }
+            
+            try {
+                // 선택된 파일들만 필터링 (폴더 경로 제외)
+                const selectedFiles = {};
+                selectedPaths.forEach(path => {
+                    if (fileContents[path]) {
+                        selectedFiles[path] = fileContents[path];
+                    }
+                });
+                
+                // 폴더가 선택된 경우 하위 파일들도 포함
+                const allFilePaths = Object.keys(fileContents);
+                selectedPaths.forEach(selectedPath => {
+                    if (!fileContents[selectedPath]) {
+                        // 폴더인 경우 하위 파일들 찾기
+                        allFilePaths.forEach(filePath => {
+                            if (filePath.startsWith(selectedPath + '/')) {
+                                selectedFiles[filePath] = fileContents[filePath];
+                            }
+                        });
+                    }
+                });
+                
+                // JSZip 라이브러리 로드
+                if (typeof JSZip === 'undefined') {
+                    await loadJSZip();
+                }
+                
+                const zip = new JSZip();
+                
+                // 선택된 파일들을 ZIP에 추가
+                Object.keys(selectedFiles).forEach(filePath => {
+                    zip.file(filePath, selectedFiles[filePath]);
+                });
+                
+                // ZIP 파일 생성 및 다운로드
+                const content = await zip.generateAsync({ type: 'blob' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(content);
+                link.download = 'selected-files.zip';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(link.href);
+                
+                // 다운로드 완료 후 선택 모드 해제
+                cancelSelection();
+                
+            } catch (error) {
+                console.error('다운로드 실패:', error);
+                alert('다운로드에 실패했습니다: ' + error.message);
+            }
+        }
+        
+        // JSZip 라이브러리 로드
+        function loadJSZip() {
+            return new Promise((resolve, reject) => {
+                if (typeof JSZip !== 'undefined') {
+                    resolve();
+                    return;
+                }
+                
+                const script = document.createElement('script');
+                script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+                script.onload = resolve;
+                script.onerror = () => reject(new Error('JSZip 라이브러리를 로드할 수 없습니다.'));
+                document.head.appendChild(script);
+            });
+        }
+    </script>
+</body>
+</html>
+    `;
+  }
+
+  // 파일 구조를 트리로 변환
+  buildFileTree(files) {
+    const tree = {};
+    
+    Object.keys(files).forEach(filePath => {
+      const parts = filePath.split('/');
+      let current = tree;
+      
+      parts.forEach((part, index) => {
+        if (!current[part]) {
+          current[part] = index === parts.length - 1 ? { _isFile: true } : {};
+        }
+        current = current[part];
+      });
+    });
+    
+    return tree;
+  }
+
+  // 파일 트리 HTML 렌더링
+  renderFileTree(tree, path = '') {
+    return Object.keys(tree).map(key => {
+      const fullPath = path ? `${path}/${key}` : key;
+      const isFile = tree[key]._isFile;
+      
+      if (isFile) {
+        const icon = this.getFileIcon(key);
+        return `<div class="tree-item file-item" data-path="${fullPath}">
+          <div class="item-content" onclick="showFile('${fullPath}')">
+            <i class="fas ${icon}"></i>
+            ${key}
+          </div>
+          <input type="checkbox" class="file-checkbox" data-path="${fullPath}" onchange="updateDownloadButton()" style="display: none;">
+        </div>`;
+      } else {
+        const children = this.renderFileTree(tree[key], fullPath);
+        return `
+          <div class="tree-item folder-item" data-path="${fullPath}">
+            <div class="item-content folder" onclick="toggleFolder(this)">
+              <i class="fas fa-folder folder-icon"></i>
+              ${key}
+            </div>
+            <input type="checkbox" class="folder-checkbox" data-path="${fullPath}" onchange="handleFolderSelection(this)" style="display: none;">
+          </div>
+          <div class="tree-children" style="display: none;">
+            ${children}
+          </div>
+        `;
+      }
+    }).join('');
+  }
+
+  // 파일 데이터를 JavaScript로 변환
+  generateFileDataScript(files) {
+    const escapedFiles = {};
+    Object.keys(files).forEach(path => {
+      // JSON.stringify로 이스케이프 처리
+      escapedFiles[path] = files[path];
+    });
+    
+    return `const fileContents = ${JSON.stringify(escapedFiles, null, 2)};`;
+  }
+
+  // HTML 이스케이프
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  // 랜덤 해시 생성
+  generateRandomHash() {
+    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let result = '';
+    for (let i = 0; i < 44; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  }
+
+  // 배포 상태 표시
+  showDeploymentStatus(status, url = null, error = null) {
+    const container = document.querySelector('.upload-section');
+    if (!container) return;
+
+    let existingStatus = container.querySelector('.deployment-status');
+    if (existingStatus) {
+      existingStatus.remove();
+    }
+
+    let content = '';
+    
+    if (status === 'deploying') {
+      content = `
+        <div class="deployment-progress">
+          <div class="deployment-spinner"></div>
+          <span>IPFS에 배포 중...</span>
+        </div>
+      `;
+    } else if (status === 'success') {
+      content = `
+        <div class="deployment-progress">
+          <i class="fas fa-check-circle"></i>
+          <span>배포 완료!</span>
+        </div>
+        <div style="margin-top: 0.5rem;">
+          <strong>IPFS URL:</strong><br>
+          <a href="${url}" target="_blank">${url}</a>
+        </div>
+      `;
+    } else if (status === 'error') {
+      content = `
+        <div class="deployment-progress">
+          <i class="fas fa-exclamation-circle"></i>
+          <span>배포 실패: ${error}</span>
+        </div>
+      `;
+    }
+
+    const statusDiv = document.createElement('div');
+    statusDiv.className = `deployment-status ${status}`;
+    statusDiv.innerHTML = content;
+    container.appendChild(statusDiv);
+
+    // 성공/실패 메시지는 5초 후 자동 제거
+    if (status !== 'deploying') {
+      setTimeout(() => {
+        if (statusDiv.parentNode) {
+          statusDiv.remove();
+        }
+      }, 5000);
+    }
+  }
+
+  // 레포지토리 상세 보기
+  viewRepository(repositoryId) {
+    const repository = this.repositories.find(repo => repo.id === repositoryId);
+    if (!repository) return;
+
+    // 레포지토리 상세 모달이나 페이지로 이동
+    if (repository.ipfsUrl) {
+      window.open(repository.ipfsUrl, '_blank');
+    } else {
+      alert('레포지토리 URL이 없습니다.');
+    }
+  }
+
+  // 레포지토리 다운로드
+  async downloadRepository(repositoryId) {
+    try {
+      const repo = this.repositories.find(r => r.id === repositoryId);
+      if (!repo) {
+        alert('레포지토리를 찾을 수 없습니다.');
+        return;
+      }
+
+      // IPFS에서 파일 데이터 가져오기
+      this.showDownloadStatus('다운로드 중...', 'loading');
+      
+      const response = await fetch(repo.ipfsUrl);
+      if (!response.ok) {
+        throw new Error('IPFS에서 데이터를 가져올 수 없습니다.');
+      }
+
+      const htmlContent = await response.text();
+      
+      // HTML에서 파일 데이터 추출
+      const fileData = this.extractFileDataFromHTML(htmlContent);
+      
+      if (!fileData || Object.keys(fileData).length === 0) {
+        throw new Error('파일 데이터를 추출할 수 없습니다.');
+      }
+
+      // ZIP 파일로 다운로드
+      await this.createAndDownloadZip(fileData, repo.name);
+      
+      this.showDownloadStatus('다운로드 완료!', 'success');
+      setTimeout(() => this.hideDownloadStatus(), 3000);
+
+    } catch (error) {
+      console.error('다운로드 실패:', error);
+      this.showDownloadStatus('다운로드 실패: ' + error.message, 'error');
+      setTimeout(() => this.hideDownloadStatus(), 5000);
+    }
+  }
+
+  // HTML에서 파일 데이터 추출
+  extractFileDataFromHTML(htmlContent) {
+    try {
+      // fileContents 객체를 찾아서 추출
+      const match = htmlContent.match(/const fileContents = ({[\s\S]*?});/);
+      if (!match) {
+        throw new Error('파일 데이터를 찾을 수 없습니다.');
+      }
+      
+      return JSON.parse(match[1]);
+    } catch (error) {
+      console.error('파일 데이터 추출 실패:', error);
+      return null;
+    }
+  }
+
+  // ZIP 파일 생성 및 다운로드
+  async createAndDownloadZip(fileData, repositoryName) {
+    // JSZip 라이브러리가 없으면 동적으로 로드
+    if (typeof JSZip === 'undefined') {
+      await this.loadJSZip();
+    }
+
+    const zip = new JSZip();
+
+    // 파일들을 ZIP에 추가
+    Object.keys(fileData).forEach(filePath => {
+      zip.file(filePath, fileData[filePath]);
+    });
+
+    // ZIP 파일 생성
+    const content = await zip.generateAsync({ type: 'blob' });
+
+    // 다운로드 트리거
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(content);
+    link.download = `${repositoryName}.zip`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    // 메모리 정리
+    URL.revokeObjectURL(link.href);
+  }
+
+  // JSZip 라이브러리 동적 로드
+  loadJSZip() {
+    return new Promise((resolve, reject) => {
+      if (typeof JSZip !== 'undefined') {
+        resolve();
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+      script.onload = resolve;
+      script.onerror = () => reject(new Error('JSZip 라이브러리를 로드할 수 없습니다.'));
+      document.head.appendChild(script);
+    });
+  }
+
+  // 다운로드 상태 표시
+  showDownloadStatus(message, type) {
+    // 기존 상태창이 있으면 제거
+    this.hideDownloadStatus();
+
+    const statusDiv = document.createElement('div');
+    statusDiv.id = 'downloadStatus';
+    statusDiv.className = `download-status ${type}`;
+    
+    const icon = type === 'loading' ? 'fa-spinner fa-spin' : 
+                 type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle';
+    
+    statusDiv.innerHTML = `
+      <i class="fas ${icon}"></i>
+      <span>${message}</span>
+    `;
+
+    document.body.appendChild(statusDiv);
+
+    // 애니메이션으로 표시
+    setTimeout(() => statusDiv.classList.add('show'), 100);
+  }
+
+  // 다운로드 상태 숨기기
+  hideDownloadStatus() {
+    const statusDiv = document.getElementById('downloadStatus');
+    if (statusDiv) {
+      statusDiv.classList.remove('show');
+      setTimeout(() => statusDiv.remove(), 300);
+    }
+  }
 }
 
 // BrotherhoodDApp 클래스에 거버넌스 관리자 추가
@@ -31140,6 +33167,69 @@ if (typeof window !== 'undefined') {
       
       window.dapp.closeCreateGovernanceProposalModal = function() {
         this.governanceManager.closeCreateProposalModal();
+      };
+
+      // 레포지토리 관련 함수들 추가
+      window.dapp.showUploadModal = function() {
+        this.governanceManager.showUploadModal();
+      };
+
+      window.dapp.closeUploadModal = function() {
+        this.governanceManager.closeUploadModal();
+      };
+
+      window.dapp.handleFileSelection = function(input) {
+        this.governanceManager.handleFileSelection(input);
+      };
+
+      window.dapp.removeSelectedFile = function(index) {
+        this.governanceManager.removeSelectedFile(index);
+      };
+
+      window.dapp.clearSelectedFiles = function() {
+        this.governanceManager.clearSelectedFiles();
+      };
+
+      window.dapp.createRepository = function() {
+        this.governanceManager.createRepository();
+      };
+
+      window.dapp.viewRepository = function(repositoryId) {
+        this.governanceManager.viewRepository(repositoryId);
+      };
+
+      window.dapp.downloadRepository = function(repositoryId) {
+        this.governanceManager.downloadRepository(repositoryId);
+      };
+
+      // IPFS 설정 관련 함수들 추가
+      window.dapp.showIPFSSettingsModal = function() {
+        this.governanceManager.showIPFSSettingsModal();
+      };
+
+      window.dapp.closeIPFSSettingsModal = function() {
+        this.governanceManager.closeIPFSSettingsModal();
+      };
+
+      window.dapp.saveIPFSSettings = function() {
+        this.governanceManager.saveIPFSSettings();
+      };
+
+      // 드래그 앤 드롭 관련 함수들 추가
+      window.dapp.handleDragOver = function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.target.closest('.upload-area').classList.add('drag-over');
+      };
+
+      window.dapp.handleDrop = function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.target.closest('.upload-area').classList.remove('drag-over');
+        
+        const files = Array.from(event.dataTransfer.files);
+        this.governanceManager.selectedFiles = files;
+        this.governanceManager.renderSelectedFiles();
       };
       
       window.dapp.handleCoreStructureUpload = function(input) {
@@ -31236,11 +33326,8 @@ window.dapp.removeAllCoreStructure = function() {
           // 서버에 투표 요청
           const response = await fetch(`${this.apiBase}/governance/proposals/${proposalId}/vote`, {
             method: 'POST',
-            credentials: 'include',
             headers: {
-              'Content-Type': 'application/json',
-              'Bypass-Tunnel-Reminder': 'true',
-              'Cache-Control': 'no-cache'
+              'Content-Type': 'application/json'
             },
             body: JSON.stringify({
               voteType: serverVoteType,
@@ -31430,10 +33517,20 @@ window.dapp.removeAllCoreStructure = function() {
           // 사용자 정보가 없으면 서버에서 가져오기 시도 (TODO: API 구현 후)
           if (!userInfo) {
             // 임시: 제안에서 저장된 정보 사용
-            const userProposal = this.governanceManager.proposals.find(p => p.author.did === userDID);
+            const userProposal = this.governanceManager.proposals.find(p => 
+              (p.author && p.author.did === userDID) || p.authorDID === userDID
+            );
             if (userProposal) {
+              let username = '알 수 없음';
+              if (userProposal.author && typeof userProposal.author === 'object') {
+                username = userProposal.author.name || userProposal.author.username || '알 수 없음';
+              } else if (typeof userProposal.author === 'string') {
+                // author가 DID 문자열인 경우, DID에서 사용자명 추출 시도
+                username = userProposal.author.includes(':') ? '사용자' : userProposal.author;
+              }
+              
               userInfo = {
-                username: userProposal.author.name || userProposal.author.username,
+                username: username,
                 profilePhoto: null,
                 statusMessage: null
               };
@@ -31468,13 +33565,15 @@ window.dapp.removeAllCoreStructure = function() {
         const proposalsList = document.getElementById('userProposalsList');
         
         // 사용자 기본 정보 설정
+        const displayUsername = userInfo.username || '알 수 없음';
+        
         if (userInfo.profilePhoto) {
           avatar.innerHTML = `<img src="${userInfo.profilePhoto}" alt="프로필" class="avatar-img">`;
         } else {
-          avatar.textContent = userInfo.username.charAt(0).toUpperCase();
+          avatar.textContent = displayUsername.charAt(0).toUpperCase();
         }
         
-        name.textContent = userInfo.username;
+        name.textContent = displayUsername;
         
         // 사용자 제안 목록 표시
         if (userProposals.length > 0) {
